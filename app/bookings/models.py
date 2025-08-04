@@ -1,0 +1,150 @@
+from django.db import models
+from django.core.exceptions import ValidationError
+from django.utils import timezone
+from app.clients.models import Client
+from app.rooms.models import Room
+from datetime import timedelta
+
+class Booking(models.Model):
+    """
+    Modelo para representar las reservas del hotel
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pendiente'),
+        ('confirmed', 'Confirmada'),
+        ('cancelled', 'Cancelada'),
+        ('completed', 'Finalizada'),
+        ('no_show', 'No Show'),
+    ]
+    
+    PAYMENT_STATUS_CHOICES = [
+        ('pending', 'Pendiente'),
+        ('paid', 'Pagado'),
+        ('partial', 'Pago Parcial'),
+        ('refunded', 'Reembolsado'),
+    ]
+    
+    # Relaciones
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, help_text="Cliente que realiza la reserva")
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, help_text="Habitación reservada")
+    
+    # Fechas
+    check_in_date = models.DateField(help_text="Fecha de llegada")
+    check_out_date = models.DateField(help_text="Fecha de salida")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Estado y pagos
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    
+    # Información adicional
+    guests_count = models.PositiveIntegerField(default=1, help_text="Número de huéspedes")
+    special_requests = models.TextField(blank=True, null=True, help_text="Solicitudes especiales")
+    total_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Precio total de la reserva")
+    
+    # Campos de control
+    confirmed_at = models.DateTimeField(blank=True, null=True, help_text="Fecha de confirmación")
+    cancelled_at = models.DateTimeField(blank=True, null=True, help_text="Fecha de cancelación")
+    cancellation_reason = models.TextField(blank=True, null=True, help_text="Motivo de cancelación")
+    
+    class Meta:
+        verbose_name = "Reserva"
+        verbose_name_plural = "Reservas"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['check_in_date', 'check_out_date']),
+            models.Index(fields=['status']),
+            models.Index(fields=['client']),
+        ]
+    
+    def __str__(self):
+        return f"Reserva {self.id} - {self.client.full_name} ({self.check_in_date} a {self.check_out_date})"
+    
+    def clean(self):
+        """Validación personalizada del modelo"""
+        super().clean()
+        
+        # Validar que las fechas sean coherentes
+        if self.check_in_date and self.check_out_date:
+            if self.check_in_date >= self.check_out_date:
+                raise ValidationError('La fecha de salida debe ser posterior a la fecha de llegada')
+            
+            if self.check_in_date < timezone.now().date():
+                raise ValidationError('No se pueden hacer reservas para fechas pasadas')
+    
+    def save(self, *args, **kwargs):
+        """Sobrescribir save para calcular precio total y validar disponibilidad"""
+        if not self.pk:  # Solo para nuevas reservas
+            self.validate_availability()
+            self.calculate_total_price()
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def duration(self):
+        """Retorna la duración de la reserva en días"""
+        if self.check_in_date and self.check_out_date:
+            return (self.check_out_date - self.check_in_date).days
+        return 0
+    
+    @property
+    def is_active(self):
+        """Verifica si la reserva está activa"""
+        return self.status in ['pending', 'confirmed']
+    
+    @property
+    def is_confirmed(self):
+        """Verifica si la reserva está confirmada"""
+        return self.status == 'confirmed'
+    
+    def calculate_total_price(self):
+        """Calcula el precio total de la reserva"""
+        if self.room and self.duration > 0:
+            self.total_price = self.room.price * self.duration
+    
+    def validate_availability(self):
+        """Valida que la habitación esté disponible para las fechas solicitadas"""
+        if not self.room.available_for_booking:
+            raise ValidationError('La habitación no está disponible para reservas')
+        
+        # Verificar si hay conflictos con otras reservas
+        conflicting_bookings = Booking.objects.filter(
+            room=self.room,
+            status__in=['pending', 'confirmed'],
+            check_in_date__lt=self.check_out_date,
+            check_out_date__gt=self.check_in_date
+        )
+        
+        if conflicting_bookings.exists():
+            raise ValidationError('La habitación no está disponible para las fechas solicitadas')
+    
+    def confirm_booking(self):
+        """Confirma la reserva"""
+        if self.status == 'pending':
+            self.status = 'confirmed'
+            self.confirmed_at = timezone.now()
+            self.room.change_status('reserved')
+            self.save()
+            return True
+        return False
+    
+    def cancel_booking(self, reason=""):
+        """Cancela la reserva"""
+        if self.status in ['pending', 'confirmed']:
+            self.status = 'cancelled'
+            self.cancelled_at = timezone.now()
+            self.cancellation_reason = reason
+            self.room.change_status('available')
+            self.save()
+            return True
+        return False
+    
+    def complete_booking(self):
+        """Marca la reserva como completada"""
+        if self.status == 'confirmed':
+            self.status = 'completed'
+            self.room.change_status('cleaning')
+            self.save()
+            return True
+        return False
