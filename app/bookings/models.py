@@ -74,12 +74,25 @@ class Booking(models.Model):
                 raise ValidationError('No se pueden hacer reservas para fechas pasadas')
     
     def save(self, *args, **kwargs):
-        """Sobrescribir save para calcular precio total y validar disponibilidad"""
-        if not self.pk:  # Solo para nuevas reservas
+        """Sobrescribir save para calcular precio total, validar disponibilidad y enviar email"""
+        is_new_booking = not self.pk  # Verificar si es una nueva reserva
+        
+        if is_new_booking:  # Solo para nuevas reservas
             self.validate_availability()
             self.calculate_total_price()
         
         super().save(*args, **kwargs)
+        
+        # Enviar email de confirmación automáticamente para nuevas reservas confirmadas
+        if is_new_booking and self.status == 'confirmed':
+            try:
+                from app.core.services import EmailService
+                EmailService.send_booking_confirmation_async(self.id)
+            except Exception as e:
+                # Log del error pero no fallar la creación de la reserva
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error al enviar email de confirmación para reserva {self.id}: {str(e)}")
     
     @property
     def duration(self):

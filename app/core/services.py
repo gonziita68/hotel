@@ -27,6 +27,14 @@ class EmailService:
             # Obtener la reserva
             booking = Booking.objects.select_related('client', 'room').get(id=booking_id)
             
+            # Verificar que el cliente tenga email
+            if not booking.client.email:
+                logger.warning(f"Cliente {booking.client.id} no tiene email configurado")
+                return {
+                    "success": False,
+                    "message": "El cliente no tiene email configurado"
+                }
+            
             # Preparar datos del email
             subject = f"Confirmación de Reserva - {booking.room.number}"
             recipient_email = booking.client.email
@@ -92,6 +100,19 @@ class EmailService:
                 "success": False,
                 "message": f"Error interno: {str(e)}"
             }
+    
+    @staticmethod
+    def send_booking_confirmation_async(booking_id: int):
+        """
+        Envía email de confirmación de forma asíncrona (para uso en save() del modelo)
+        No retorna resultado para evitar bloquear la creación de la reserva
+        """
+        try:
+            result = EmailService.send_booking_confirmation(booking_id)
+            if not result["success"]:
+                logger.warning(f"Email de confirmación falló para reserva {booking_id}: {result['message']}")
+        except Exception as e:
+            logger.error(f"Error al enviar email de confirmación para reserva {booking_id}: {str(e)}")
     
     @staticmethod
     def send_welcome_email(client_id: int) -> dict:
