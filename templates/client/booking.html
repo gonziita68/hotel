@@ -64,20 +64,24 @@
                                 <div>
                                     <label for="check_in" class="form-label">Fecha de Llegada</label>
                                     <input type="date" class="form-control" id="check_in" name="check_in" 
-                                           required onchange="calculatePrice()">
+                                           min="{{ today }}" required onchange="calculatePrice(); validateDates();">
                                 </div>
                                 <div>
                                     <label for="check_out" class="form-label">Fecha de Salida</label>
                                     <input type="date" class="form-control" id="check_out" name="check_out" 
-                                           required onchange="calculatePrice()">
+                                           min="{{ min_checkout }}" required onchange="calculatePrice(); validateDates();">
                                 </div>
+                            </div>
+                            <div id="date-error" class="text-danger mt-2" style="display: none;"></div>
+                            <div id="nights-display" class="text-muted mt-2" style="display: none;">
+                                <i class="fas fa-moon me-2"></i><span id="nights-count">0</span> noches
                             </div>
                         </div>
                         
                         <!-- Guest Information -->
                         <div class="mb-4">
                             <label for="guests_count" class="form-label fw-bold">Número de Huéspedes *</label>
-                            <select class="form-select" id="guests_count" name="guests_count" required>
+                            <select class="form-select" id="guests_count" name="guests_count" required onchange="validateCapacity();">
                                 <option value="">Selecciona el número de huéspedes</option>
                                 <option value="1">1 persona</option>
                                 <option value="2">2 personas</option>
@@ -86,6 +90,12 @@
                                 <option value="5">5 personas</option>
                                 <option value="6">6+ personas</option>
                             </select>
+                            <div id="capacity-error" class="text-danger mt-2" style="display: none;"></div>
+                            {% if room %}
+                            <div class="text-muted mt-2">
+                                <i class="fas fa-info-circle me-2"></i>Esta habitación tiene capacidad para {{ room.capacity }} personas
+                            </div>
+                            {% endif %}
                         </div>
                         
                         <!-- Special Requests -->
@@ -143,7 +153,7 @@
                         <!-- Selected Room Info -->
                         <div class="mb-4">
                             <div class="d-flex align-items-center mb-3">
-                                <img src="https://images.unsplash.com/photo-1566665797739-1674de7a421a?ixlib=rb-4.0.3&auto=format&fit=crop&w=150&q=80" 
+                                <img src="{{ room.main_image|default:'https://images.unsplash.com/photo-1566665797739-1674de7a421a?ixlib=rb-4.0.3&auto=format&fit=crop&w=150&q=80' }}" 
                                      class="rounded me-3" style="width: 80px; height: 60px; object-fit: cover;" alt="Habitación">
                                 <div>
                                     <h6 class="fw-bold mb-1">{{ room.get_type_display }}</h6>
@@ -290,24 +300,109 @@
     function calculatePrice() {
         const checkIn = document.getElementById('check_in').value;
         const checkOut = document.getElementById('check_out').value;
-        const pricePerNight = document.getElementById('price_per_night').textContent.replace('$', '');
+        const pricePerNightElement = document.getElementById('price_per_night');
+        
+        if (!pricePerNightElement) {
+            console.error('Element price_per_night not found');
+            return;
+        }
+        
+        const pricePerNight = pricePerNightElement.textContent.replace('$', '').replace(',', '');
         const price = parseFloat(pricePerNight) || 0;
+        
+        console.log('Check-in:', checkIn, 'Check-out:', checkOut, 'Price per night:', price);
         
         if (checkIn && checkOut && price > 0) {
             const checkInDate = new Date(checkIn);
             const checkOutDate = new Date(checkOut);
             
             if (checkOutDate > checkInDate) {
-                const nights = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
+                const timeDiff = checkOutDate.getTime() - checkInDate.getTime();
+                const nights = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
                 const total = nights * price;
+                
+                console.log('Nights:', nights, 'Total:', total);
                 
                 document.getElementById('nights_count').textContent = nights;
                 document.getElementById('total_price').textContent = '$' + total.toFixed(2);
+                
+                // Show nights display
+                const nightsDisplay = document.getElementById('nights-display');
+                if (nightsDisplay) {
+                    document.getElementById('nights-count').textContent = nights;
+                    nightsDisplay.style.display = 'block';
+                }
             } else {
                 document.getElementById('nights_count').textContent = '0';
                 document.getElementById('total_price').textContent = '$0.00';
+                
+                // Hide nights display
+                const nightsDisplay = document.getElementById('nights-display');
+                if (nightsDisplay) {
+                    nightsDisplay.style.display = 'none';
+                }
+            }
+        } else {
+            // Reset values if conditions are not met
+            document.getElementById('nights_count').textContent = '0';
+            document.getElementById('total_price').textContent = '$0.00';
+            
+            const nightsDisplay = document.getElementById('nights-display');
+            if (nightsDisplay) {
+                nightsDisplay.style.display = 'none';
             }
         }
+    }
+    
+    function validateDates() {
+        const checkIn = document.getElementById('check_in').value;
+        const checkOut = document.getElementById('check_out').value;
+        const dateError = document.getElementById('date-error');
+        
+        if (checkIn && checkOut) {
+            const checkInDate = new Date(checkIn);
+            const checkOutDate = new Date(checkOut);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            if (checkInDate < today) {
+                dateError.textContent = 'La fecha de llegada no puede ser anterior a hoy.';
+                dateError.style.display = 'block';
+                return false;
+            } else if (checkOutDate <= checkInDate) {
+                dateError.textContent = 'La fecha de salida debe ser posterior a la fecha de llegada.';
+                dateError.style.display = 'block';
+                return false;
+            } else {
+                dateError.style.display = 'none';
+                // Update minimum checkout date
+                const minCheckout = new Date(checkInDate);
+                minCheckout.setDate(minCheckout.getDate() + 1);
+                document.getElementById('check_out').min = minCheckout.toISOString().split('T')[0];
+                return true;
+            }
+        }
+        return true;
+    }
+    
+    function validateCapacity() {
+        const guestsCount = parseInt(document.getElementById('guests_count').value);
+        const capacityError = document.getElementById('capacity-error');
+        
+        {% if room %}
+        const roomCapacity = {{ room.capacity }};
+        
+        if (guestsCount > roomCapacity) {
+            capacityError.textContent = `Esta habitación solo tiene capacidad para ${roomCapacity} personas.`;
+            capacityError.style.display = 'block';
+            return false;
+        } else {
+            capacityError.style.display = 'none';
+            return true;
+        }
+        {% endif %}
+        
+        return true;
     }
     
     function validateBookingForm(form) {
@@ -316,23 +411,22 @@
         const guestsCount = document.getElementById('guests_count').value;
         const terms = document.getElementById('terms').checked;
         
+        // Clear previous errors
+        document.getElementById('date-error').style.display = 'none';
+        document.getElementById('capacity-error').style.display = 'none';
+        
         if (!checkIn || !checkOut || !guestsCount || !terms) {
             alert('Por favor completa todos los campos requeridos.');
             return false;
         }
         
-        const checkInDate = new Date(checkIn);
-        const checkOutDate = new Date(checkOut);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        if (checkInDate < today) {
-            alert('La fecha de llegada no puede ser anterior a hoy.');
+        // Validate dates
+        if (!validateDates()) {
             return false;
         }
         
-        if (checkOutDate <= checkInDate) {
-            alert('La fecha de salida debe ser posterior a la fecha de llegada.');
+        // Validate capacity
+        if (!validateCapacity()) {
             return false;
         }
         

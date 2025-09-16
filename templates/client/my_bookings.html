@@ -26,6 +26,21 @@
 <!-- Bookings List -->
 <section class="py-5">
     <div class="container">
+        <!-- Mensajes de confirmación -->
+        {% if messages %}
+        <div class="row mb-4">
+            <div class="col-12">
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                    <i class="fas fa-check-circle me-2"></i>
+                    <strong>{{ message }}</strong>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
         {% if bookings %}
         <div class="row mb-4">
             <div class="col-lg-8">
@@ -193,23 +208,99 @@
     <div class="container">
         <div class="row mb-4">
             <div class="col-lg-8">
-                <h2 class="fw-bold mb-3">Próximas Reservas</h2>
-                <p class="text-muted">Tus próximas estadías confirmadas</p>
+                <h2 class="fw-bold mb-3">Mis Reservas</h2>
+                <p class="text-muted">Gestiona todas tus reservas desde aquí</p>
+            </div>
+            <div class="col-lg-4 text-end">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-outline-primary active" onclick="filterBookings('all')">
+                        Todas
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" onclick="filterBookings('upcoming')">
+                        Próximas
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" onclick="filterBookings('past')">
+                        Pasadas
+                    </button>
+                </div>
             </div>
         </div>
-        
+
+        <!-- Booking Stats -->
+        <div class="row mb-5">
+            <div class="col-md-3">
+                <div class="client-card text-center">
+                    <div class="card-body">
+                        <div class="stat-number text-primary">{{ bookings|length }}</div>
+                        <div class="stat-label">Total Reservas</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="client-card text-center">
+                    <div class="card-body">
+                        <div class="stat-number text-success">
+                            {% for booking in bookings %}
+                                {% if booking.status == 'confirmed' %}{{ forloop.counter0|add:1 }}{% endif %}
+                            {% empty %}0{% endfor %}
+                        </div>
+                        <div class="stat-label">Confirmadas</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="client-card text-center">
+                    <div class="card-body">
+                        <div class="stat-number text-warning">
+                            {% for booking in bookings %}
+                                {% if booking.status == 'pending' %}{{ forloop.counter0|add:1 }}{% endif %}
+                            {% empty %}0{% endfor %}
+                        </div>
+                        <div class="stat-label">Pendientes</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="client-card text-center">
+                    <div class="card-body">
+                        <div class="stat-number text-info">
+                            {% for booking in bookings %}
+                                {% if booking.status == 'completed' %}{{ forloop.counter0|add:1 }}{% endif %}
+                            {% empty %}0{% endfor %}
+                        </div>
+                        <div class="stat-label">Completadas</div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="row g-4">
-            {% for booking in bookings|slice:":3" %}
-            {% if booking.status == 'confirmed' or booking.status == 'pending' %}
+            {% for booking in bookings %}
             <div class="col-lg-4">
-                <div class="client-card h-100">
+                <div class="client-card h-100 booking-card" 
+                     data-checkin="{{ booking.check_in_date|date:'Y-m-d' }}"
+                     data-checkout="{{ booking.check_out_date|date:'Y-m-d' }}"
+                     data-status="{{ booking.status }}">
                     <div class="position-relative">
                         <img src="https://images.unsplash.com/photo-1566665797739-1674de7a421a?ixlib=rb-4.0.3&auto=format&fit=crop&w=500&q=80" 
                              class="card-img-top" alt="Habitación {{ booking.room.number }}">
                         <div class="position-absolute top-0 end-0 m-3">
-                            <span class="badge bg-success">
-                                <i class="fas fa-calendar-check me-1"></i>Próxima
-                            </span>
+                            {% if booking.status == 'confirmed' %}
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check-circle me-1"></i>Confirmada
+                                </span>
+                            {% elif booking.status == 'pending' %}
+                                <span class="badge bg-warning">
+                                    <i class="fas fa-clock me-1"></i>Pendiente
+                                </span>
+                            {% elif booking.status == 'completed' %}
+                                <span class="badge bg-info">
+                                    <i class="fas fa-flag-checkered me-1"></i>Completada
+                                </span>
+                            {% elif booking.status == 'cancelled' %}
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-times-circle me-1"></i>Cancelada
+                                </span>
+                            {% endif %}
                         </div>
                     </div>
                     <div class="card-body">
@@ -240,11 +331,34 @@
                             <a href="{% url 'client_booking_detail' booking.id %}" class="btn btn-outline-primary">
                                 <i class="fas fa-eye me-2"></i>Ver Detalles
                             </a>
+                            {% if booking.status == 'confirmed' or booking.status == 'pending' %}
+                            <button type="button" class="btn btn-outline-danger btn-sm" 
+                                    onclick="confirmCancel({{ booking.id }}, '{{ booking.room.get_type_display }} - Habitación {{ booking.room.number }}')">
+                                <i class="fas fa-times me-2"></i>Cancelar
+                            </button>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
             </div>
-            {% endif %}
+            {% empty %}
+            <div class="col-12">
+                <div class="text-center py-5">
+                    <i class="fas fa-calendar-times fa-3x text-muted mb-3"></i>
+                    <h3 class="fw-bold mb-3">No tienes reservas</h3>
+                    <p class="text-muted mb-4">
+                        Aún no has hecho ninguna reserva. ¡Explora nuestras habitaciones y encuentra la perfecta para ti!
+                    </p>
+                    <div class="d-flex gap-3 justify-content-center flex-wrap">
+                        <a href="{% url 'client_rooms' %}" class="btn btn-primary btn-lg">
+                            <i class="fas fa-bed me-2"></i>Ver Habitaciones
+                        </a>
+                        <a href="{% url 'client_index' %}" class="btn btn-outline-primary btn-lg">
+                            <i class="fas fa-home me-2"></i>Volver al Inicio
+                        </a>
+                    </div>
+                </div>
+            </div>
             {% endfor %}
         </div>
     </div>
@@ -314,6 +428,74 @@
         
         const modal = new bootstrap.Modal(document.getElementById('cancelModal'));
         modal.show();
+    }
+    
+    function filterBookings(filter) {
+        // Update active button
+        document.querySelectorAll('.btn-group .btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+        
+        // Get all booking cards
+        const bookingCards = document.querySelectorAll('.booking-card');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        bookingCards.forEach(card => {
+            const checkInDate = new Date(card.dataset.checkin);
+            const checkOutDate = new Date(card.dataset.checkout);
+            const status = card.dataset.status;
+            
+            let show = false;
+            
+            switch(filter) {
+                case 'all':
+                    show = true;
+                    break;
+                case 'upcoming':
+                    show = (checkInDate >= today || (checkInDate <= today && checkOutDate >= today)) && 
+                           (status === 'confirmed' || status === 'pending');
+                    break;
+                case 'past':
+                    show = checkOutDate < today || status === 'completed' || status === 'cancelled';
+                    break;
+            }
+            
+            if (show) {
+                card.style.display = 'block';
+                card.parentElement.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+                card.parentElement.style.display = 'none';
+            }
+        });
+        
+        // Check if any bookings are visible
+        const visibleBookings = Array.from(bookingCards).filter(card => 
+            card.style.display !== 'none'
+        );
+        
+        const noBookingsMessage = document.getElementById('no-bookings-message');
+        if (visibleBookings.length === 0) {
+            if (!noBookingsMessage) {
+                const message = document.createElement('div');
+                message.id = 'no-bookings-message';
+                message.className = 'col-12 text-center py-5';
+                message.innerHTML = `
+                    <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                    <h4>No se encontraron reservas</h4>
+                    <p class="text-muted">No tienes reservas que coincidan con el filtro seleccionado.</p>
+                `;
+                document.querySelector('.row.g-4').appendChild(message);
+            } else {
+                noBookingsMessage.style.display = 'block';
+            }
+        } else {
+            if (noBookingsMessage) {
+                noBookingsMessage.style.display = 'none';
+            }
+        }
     }
 </script>
 {% endblock %}

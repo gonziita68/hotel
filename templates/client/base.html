@@ -116,6 +116,222 @@
             transform: translateY(-2px);
         }
 
+        /* Room Cards */
+        .room-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .room-card:hover {
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-4px);
+        }
+
+        .room-card.available {
+            border-color: var(--success-color);
+        }
+
+        .room-card.unavailable {
+            opacity: 0.8;
+            border-color: var(--secondary-color);
+        }
+
+        .room-image-container {
+            position: relative;
+            height: 250px;
+            overflow: hidden;
+        }
+
+        .room-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .room-card:hover .room-image {
+            transform: scale(1.05);
+        }
+
+        .room-status-overlay {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 2;
+        }
+
+        .room-number-badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 2;
+        }
+
+        .room-price-overlay {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            z-index: 2;
+        }
+
+        .price-tag {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+        }
+
+        .price-amount {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .price-period {
+            font-size: 0.875rem;
+            opacity: 0.9;
+        }
+
+        .room-content {
+            padding: 1.5rem;
+        }
+
+        .room-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .room-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--dark-color);
+            margin: 0;
+        }
+
+        .room-rating {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .rating-text {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--secondary-color);
+            margin-left: 0.25rem;
+        }
+
+        .room-description {
+            color: var(--secondary-color);
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+
+        .room-features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--secondary-color);
+        }
+
+        .feature-item i {
+            width: 16px;
+            text-align: center;
+        }
+
+        .room-amenities {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .amenity-badge {
+            background: var(--light-color);
+            color: var(--secondary-color);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border: 1px solid var(--border-color);
+        }
+
+        .room-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn-action {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            font-weight: 500;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-reserve {
+            background: var(--success-color) !important;
+            border-color: var(--success-color) !important;
+            color: white !important;
+        }
+
+        .btn-reserve:hover {
+            background: #059669 !important;
+            border-color: #059669 !important;
+            transform: translateY(-1px);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.5rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(10px);
+        }
+
+        .status-available {
+            background: rgba(16, 185, 129, 0.9);
+            color: white;
+        }
+
+        .status-occupied {
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+        }
+
+        .status-cleaning {
+            background: rgba(59, 130, 246, 0.9);
+            color: white;
+        }
+
+        .status-maintenance {
+            background: rgba(245, 158, 11, 0.9);
+            color: white;
+        }
+
+        .status-reserved {
+            background: rgba(139, 69, 19, 0.9);
+            color: white;
+        }
+
         .client-card .card-img-top {
             height: 200px;
             object-fit: cover;
