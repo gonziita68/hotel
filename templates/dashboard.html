@@ -92,7 +92,7 @@
                                 <div class="stats-icon" style="background: linear-gradient(135deg, #3498db, #2980b9);">
                                     <i class="fas fa-bed"></i>
                                 </div>
-                                <div class="stats-number">{{ total_rooms }}</div>
+                                <div class="stats-number" id="total-rooms">{{ total_rooms }}</div>
                                 <div class="stats-label">Total Habitaciones</div>
                             </div>
                         </div>
@@ -101,7 +101,7 @@
                                 <div class="stats-icon" style="background: linear-gradient(135deg, #27ae60, #229954);">
                                     <i class="fas fa-check-circle"></i>
                                 </div>
-                                <div class="stats-number">{{ available_rooms }}</div>
+                                <div class="stats-number" id="available-rooms">{{ available_rooms }}</div>
                                 <div class="stats-label">Disponibles</div>
                             </div>
                         </div>
@@ -110,7 +110,7 @@
                                 <div class="stats-icon" style="background: linear-gradient(135deg, #e74c3c, #c0392b);">
                                     <i class="fas fa-user-check"></i>
                                 </div>
-                                <div class="stats-number">{{ occupied_rooms }}</div>
+                                <div class="stats-number" id="occupied-rooms">{{ occupied_rooms }}</div>
                                 <div class="stats-label">Ocupadas</div>
                             </div>
                         </div>
@@ -119,7 +119,7 @@
                                 <div class="stats-icon" style="background: linear-gradient(135deg, #f39c12, #e67e22);">
                                     <i class="fas fa-dollar-sign"></i>
                                 </div>
-                                <div class="stats-number">${{ total_revenue|floatformat:0 }}</div>
+                                <div class="stats-number" id="total-revenue">${{ total_revenue|floatformat:0 }}</div>
                                 <div class="stats-label">Ingresos del Mes</div>
                             </div>
                         </div>
@@ -135,22 +135,22 @@
                                 <div class="card-body">
                                     <div class="row">
                                         <div class="col-md-3 mb-2">
-                                            <a href="{% url 'bookings' %}" class="btn btn-primary w-100">
+                                            <a href="{% url 'booking_step1' %}" class="btn btn-primary w-100" id="nueva-reserva-btn">
                                                 <i class="fas fa-plus"></i> Nueva Reserva
                                             </a>
                                         </div>
                                         <div class="col-md-3 mb-2">
-                                            <a href="{% url 'clients' %}" class="btn btn-success w-100">
+                                            <button type="button" class="btn btn-success w-100" id="nuevo-cliente-btn" data-bs-toggle="modal" data-bs-target="#quickClientModal">
                                                 <i class="fas fa-user-plus"></i> Nuevo Cliente
-                                            </a>
+                                            </button>
                                         </div>
                                         <div class="col-md-3 mb-2">
-                                            <a href="{% url 'rooms' %}" class="btn btn-info w-100">
+                                            <a href="{% url 'rooms' %}" class="btn btn-info w-100" id="gestionar-habitaciones-btn">
                                                 <i class="fas fa-bed"></i> Gestionar Habitaciones
                                             </a>
                                         </div>
                                         <div class="col-md-3 mb-2">
-                                            <a href="{% url 'reports' %}" class="btn btn-warning w-100">
+                                            <a href="{% url 'reports' %}" class="btn btn-warning w-100" id="ver-reportes-btn">
                                                 <i class="fas fa-chart-line"></i> Ver Reportes
                                             </a>
                                         </div>
@@ -248,4 +248,132 @@
         </div>
     </div>
 </div>
+
+<script>
+    // Function to update dashboard metrics
+    function updateDashboardMetrics() {
+        fetch('{% url "dashboard_metrics_api" %}')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('total-rooms').textContent = data.total_rooms;
+                document.getElementById('available-rooms').textContent = data.available_rooms;
+                document.getElementById('occupied-rooms').textContent = data.occupied_rooms;
+                document.getElementById('total-revenue').textContent = formatCurrency(data.total_revenue);
+            })
+            .catch(error => console.error('Error updating metrics:', error));
+    }
+
+    // Function to format currency
+    function formatCurrency(amount) {
+        return '$' + parseFloat(amount).toLocaleString('es-ES', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        });
+    }
+
+    // Auto-update metrics every 30 seconds
+    setInterval(updateDashboardMetrics, 30000);
+</script>
+
+<!-- Quick Client Modal -->
+<div class="modal fade" id="quickClientModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Nuevo Cliente - Acceso Rápido</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="quickClientForm" method="post" action="{% url 'dashboard' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_client">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Nombre *</label>
+                                <input type="text" class="form-control" name="first_name" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Apellido *</label>
+                                <input type="text" class="form-control" name="last_name" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email *</label>
+                        <input type="email" class="form-control" name="email" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Teléfono</label>
+                                <input type="tel" class="form-control" name="phone">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">DNI *</label>
+                                <input type="text" class="form-control" name="dni" required>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-save"></i> Crear Cliente
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Handle quick client form submission
+    document.getElementById('quickClientForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        
+        fetch('{% url "dashboard" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('quickClientModal'));
+                modal.hide();
+                
+                // Show success message
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                alertDiv.innerHTML = `
+                    <i class="fas fa-check-circle"></i> Cliente creado exitosamente: ${data.client_name}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.querySelector('.container-fluid').insertBefore(alertDiv, document.querySelector('.container-fluid').firstChild);
+                
+                // Reset form
+                this.reset();
+                
+                // Log action
+                console.log('Cliente creado:', data.client_name);
+            } else {
+                alert('Error al crear cliente: ' + (data.error || 'Error desconocido'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error al crear cliente');
+        });
+    });
+</script>
 {% endblock %}

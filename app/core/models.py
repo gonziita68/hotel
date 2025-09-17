@@ -2,6 +2,35 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+class ActionLog(models.Model):
+    """Modelo para registrar acciones del usuario en el sistema"""
+    
+    ACTION_CHOICES = [
+        ('nueva_reserva', 'Nueva Reserva'),
+        ('nuevo_cliente', 'Nuevo Cliente'),
+        ('gestionar_habitaciones', 'Gestionar Habitaciones'),
+        ('ver_reportes', 'Ver Reportes'),
+        ('dashboard_view', 'Vista Dashboard'),
+    ]
+    
+    # Información de la acción
+    user = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="Usuario")
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES, verbose_name="Acción")
+    description = models.CharField(max_length=200, blank=True, verbose_name="Descripción")
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="Dirección IP")
+    user_agent = models.TextField(blank=True, verbose_name="User Agent")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de creación")
+    
+    class Meta:
+        verbose_name = "Log de Acción"
+        verbose_name_plural = "Logs de Acciones"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.get_action_display()} - {self.created_at}"
+
 class EmailLog(models.Model):
     """Modelo para registrar emails enviados del sistema"""
     

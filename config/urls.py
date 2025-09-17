@@ -32,7 +32,7 @@ from app.core.views import (
     login_view, register_view, logout_view, dashboard_view,
     profile_view, settings_view, rooms_view, bookings_view,
     clients_view, cleaning_view, maintenance_view,
-    administration_view, reports_view,
+    administration_view, reports_view, dashboard_metrics_api,
     # Vistas del portal de clientes
     client_index_view, client_rooms_view, client_room_detail_view,
     client_booking_view, client_my_bookings_view, client_booking_detail_view,
@@ -351,6 +351,7 @@ urlpatterns = [
     
     # Rutas web
     path("", dashboard_view, name="dashboard"),
+    path("api/dashboard-metrics/", dashboard_metrics_api, name="dashboard_metrics_api"),
     path("login/", login_view, name="login"),
     path("register/", register_view, name="register"),
     path("logout/", logout_view, name="logout"),

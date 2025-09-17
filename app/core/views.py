@@ -4,22 +4,48 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
-from django.db.models import Count, Sum
+from django.db.models import Count, Sum, Q
+from django.http import JsonResponse
 from datetime import datetime, timedelta
+import locale
+from .utils import log_user_action
+
+# Configurar locale para formato de moneda colombiana
+try:
+    locale.setlocale(locale.LC_ALL, 'es_CO.UTF-8')
+except locale.Error:
+    try:
+        locale.setlocale(locale.LC_ALL, 'Spanish_Colombia.1252')
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_ALL, 'es_ES.UTF-8')
+        except locale.Error:
+            pass  # Usar formato por defecto si no se puede configurar
 
 # Importar modelos de las apps
 try:
     from app.rooms.models import Room
+except ImportError:
+    Room = None
+
+try:
     from app.bookings.models import Booking
+except ImportError:
+    Booking = None
+
+try:
     from app.clients.models import Client
+except ImportError:
+    Client = None
+
+try:
     from app.cleaning.models import CleaningTask
+except ImportError:
+    CleaningTask = None
+
+try:
     from app.maintenance.models import MaintenanceRequest
 except ImportError:
-    # Si los modelos no existen, crear placeholders
-    Room = None
-    Booking = None
-    Client = None
-    CleaningTask = None
     MaintenanceRequest = None
 
 def login_view(request):
@@ -77,21 +103,42 @@ def logout_view(request):
     messages.info(request, 'Has cerrado sesión exitosamente.')
     return redirect('login')
 
-@login_required
-def dashboard_view(request):
-    """Vista del dashboard principal"""
-    context = {}
+def get_dashboard_metrics():
+    """Función para obtener métricas del dashboard de forma optimizada"""
+    metrics = {}
     
-    # Obtener estadísticas básicas
-    if Room:
-        context['total_rooms'] = Room.objects.count()
-        context['available_rooms'] = Room.objects.filter(status='available').count()
-        context['occupied_rooms'] = Room.objects.filter(status='occupied').count()
-        context['cleaning_rooms'] = Room.objects.filter(status='cleaning').count()
-        context['maintenance_rooms'] = Room.objects.filter(status='maintenance').count()
-    else:
+    # Obtener estadísticas de habitaciones
+    try:
+        from app.rooms.models import Room as RoomModel
+        room_stats = RoomModel.objects.aggregate(
+            total=Count('id'),
+            available=Count('id', filter=Q(status='available')),
+            cleaning=Count('id', filter=Q(status='cleaning')),
+            maintenance=Count('id', filter=Q(status='maintenance'))
+        )
+        
+        # Calcular habitaciones ocupadas basándose en reservas activas
+        try:
+            from app.bookings.models import Booking as BookingModel
+            today = datetime.now().date()
+            occupied_rooms = BookingModel.objects.filter(
+                check_in_date__lte=today,
+                check_out_date__gte=today,
+                status='confirmed'
+            ).values('room').distinct().count()
+        except ImportError:
+            occupied_rooms = RoomModel.objects.filter(status='occupied').count()
+        
+        metrics.update({
+            'total_rooms': room_stats['total'],
+            'available_rooms': room_stats['available'],
+            'occupied_rooms': occupied_rooms,
+            'cleaning_rooms': room_stats['cleaning'],
+            'maintenance_rooms': room_stats['maintenance']
+        })
+    except ImportError:
         # Datos de ejemplo si no hay modelos
-        context.update({
+        metrics.update({
             'total_rooms': 50,
             'available_rooms': 35,
             'occupied_rooms': 12,
@@ -99,44 +146,120 @@ def dashboard_view(request):
             'maintenance_rooms': 1
         })
     
-    if Booking:
-        # Reservas activas (check-in <= hoy <= check-out)
+    # Obtener estadísticas de reservas e ingresos
+    try:
+        from app.bookings.models import Booking as BookingModel
         today = datetime.now().date()
-        context['active_bookings'] = Booking.objects.filter(
-            check_in__lte=today,
-            check_out__gte=today,
-            status='active'
-        ).count()
-        
-        # Reservas recientes
-        context['recent_bookings'] = Booking.objects.select_related('client', 'room').order_by('-created_at')[:10]
-        
-        # Ingresos del mes actual
         start_of_month = datetime.now().replace(day=1).date()
-        context['total_revenue'] = Booking.objects.filter(
-            check_in__gte=start_of_month,
-            status='completed'
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-    else:
-        context.update({
+        
+        booking_stats = BookingModel.objects.aggregate(
+            active_bookings=Count('id', filter=Q(
+                check_in_date__lte=today,
+                check_out_date__gte=today,
+                status='confirmed'
+            )),
+            total_revenue=Sum('total_price', filter=Q(
+                check_in_date__gte=start_of_month,
+                status__in=['confirmed', 'completed']
+            ))
+        )
+        
+        metrics.update({
+            'active_bookings': booking_stats['active_bookings'] or 0,
+            'total_revenue': booking_stats['total_revenue'] or 0,
+            'recent_bookings': BookingModel.objects.select_related('client', 'room').order_by('-created_at')[:10]
+        })
+    except ImportError:
+        metrics.update({
             'active_bookings': 15,
-            'recent_bookings': [],
-            'total_revenue': 25000
+            'total_revenue': 25000000,
+            'recent_bookings': []
         })
     
-    if Client:
-        context['total_clients'] = Client.objects.count()
-    else:
-        context['total_clients'] = 120
+    # Obtener estadísticas de clientes
+    try:
+        from app.clients.models import Client as ClientModel
+        metrics['total_clients'] = ClientModel.objects.count()
+    except ImportError:
+        metrics['total_clients'] = 120
     
-    if MaintenanceRequest:
-        # Alertas de mantenimiento pendientes
-        context['maintenance_alerts'] = MaintenanceRequest.objects.select_related('room').filter(
+    # Obtener alertas de mantenimiento
+    try:
+        from app.maintenance.models import MaintenanceRequest
+        metrics['maintenance_alerts'] = MaintenanceRequest.objects.select_related('room').filter(
             status='pending'
         ).order_by('-priority', '-created_at')[:5]
-    else:
-        context['maintenance_alerts'] = []
+    except ImportError:
+        metrics['maintenance_alerts'] = []
     
+    return metrics
+
+
+@login_required
+def dashboard_metrics_api(request):
+    """API endpoint para obtener métricas del dashboard en tiempo real"""
+    try:
+        metrics = get_dashboard_metrics()
+        
+        # Formatear datos para JSON
+        response_data = {
+            'total_rooms': metrics['total_rooms'],
+            'available_rooms': metrics['available_rooms'],
+            'occupied_rooms': metrics['occupied_rooms'],
+            'cleaning_rooms': metrics['cleaning_rooms'],
+            'maintenance_rooms': metrics['maintenance_rooms'],
+            'total_revenue': float(metrics['total_revenue']),
+            'active_bookings': metrics['active_bookings'],
+            'total_clients': metrics['total_clients'],
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return JsonResponse(response_data)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def dashboard_view(request):
+    """Vista del dashboard principal"""
+    
+    # Registrar acceso al dashboard
+    log_user_action(request.user, 'dashboard_view', 'Usuario accedió al dashboard', request)
+    
+    # Handle quick client creation
+    if request.method == 'POST' and request.POST.get('action') == 'create_client':
+        try:
+            if Client:
+                client = Client.objects.create(
+                    first_name=request.POST.get('first_name'),
+                    last_name=request.POST.get('last_name'),
+                    email=request.POST.get('email'),
+                    phone=request.POST.get('phone', ''),
+                    dni=request.POST.get('dni'),
+                )
+                
+                # Registrar creación de cliente
+                log_user_action(
+                    request.user, 
+                    'nuevo_cliente', 
+                    f'Cliente creado: {client.first_name} {client.last_name}', 
+                    request
+                )
+                
+                return JsonResponse({
+                    'success': True,
+                    'client_name': f"{client.first_name} {client.last_name}",
+                    'client_id': client.id
+                })
+            else:
+                return JsonResponse({'success': False, 'error': 'Client model not available'})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)})
+    
+    # Usar la función optimizada para obtener métricas
+    context = get_dashboard_metrics()
+    
+    # Agregar datos adicionales específicos para la vista
     if CleaningTask:
         # Programación de limpieza
         context['cleaning_schedule'] = CleaningTask.objects.select_related('room', 'employee').filter(
@@ -167,10 +290,11 @@ def settings_view(request):
     """Vista de configuración"""
     return render(request, 'settings.html')
 
-# Vistas placeholder para las diferentes secciones
 @login_required
 def rooms_view(request):
     """Vista de habitaciones"""
+    log_user_action(request.user, 'gestionar_habitaciones', 'Usuario accedió a gestión de habitaciones', request)
+    
     if Room:
         rooms = Room.objects.all()
     else:
@@ -180,6 +304,8 @@ def rooms_view(request):
 @login_required
 def bookings_view(request):
     """Vista de reservas"""
+    log_user_action(request.user, 'nueva_reserva', 'Usuario accedió a gestión de reservas', request)
+    
     if Booking:
         bookings = Booking.objects.select_related('client', 'room').all()
     else:
@@ -221,6 +347,7 @@ def administration_view(request):
 @login_required
 def reports_view(request):
     """Vista de reportes"""
+    log_user_action(request.user, 'ver_reportes', 'Usuario accedió a reportes', request)
     return render(request, 'reports/dashboard.html')
 
 # ============================================================================
