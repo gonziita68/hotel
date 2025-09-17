@@ -1,4 +1,4 @@
-from django.shortcuts import render, redirect
+jvfrom django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -23,21 +23,9 @@ except locale.Error:
             pass  # Usar formato por defecto si no se puede configurar
 
 # Importar modelos de las apps
-try:
-    from app.rooms.models import Room
-except ImportError:
-    Room = None
-
-try:
-    from app.bookings.models import Booking
-except ImportError:
-    Booking = None
-
-try:
-    from app.clients.models import Client
-except ImportError:
-    Client = None
-
+from app.rooms.models import Room
+from app.bookings.models import Booking
+from app.clients.models import Client
 try:
     from app.cleaning.models import CleaningTask
 except ImportError:
@@ -381,28 +369,73 @@ def client_index_view(request):
 def client_rooms_view(request):
     """Vista de habitaciones disponibles para clientes"""
     if Room:
-        rooms = Room.objects.filter(active=True)
+        # Obtener todas las habitaciones activas por defecto
+        rooms = Room.objects.filter(active=True).order_by('number')
         
-        # Filtros
-        room_type = request.GET.get('type')
-        min_price = request.GET.get('min_price')
-        max_price = request.GET.get('max_price')
-        guests = request.GET.get('guests')
+        # Aplicar filtros solo si se proporcionan
+        room_type = request.GET.get('type', '').strip()
+        min_price = request.GET.get('min_price', '').strip()
+        max_price = request.GET.get('max_price', '').strip()
+        guests = request.GET.get('guests', '').strip()
+        status_filter = request.GET.get('status', '').strip()
         
+        # Filtro por tipo de habitación
         if room_type:
             rooms = rooms.filter(type=room_type)
+            
+        # Filtro por precio mínimo
         if min_price:
-            rooms = rooms.filter(price__gte=min_price)
+            try:
+                min_price_val = float(min_price)
+                if min_price_val >= 0:
+                    rooms = rooms.filter(price__gte=min_price_val)
+            except (ValueError, TypeError):
+                pass
+                
+        # Filtro por precio máximo
         if max_price:
-            rooms = rooms.filter(price__lte=max_price)
+            try:
+                max_price_val = float(max_price)
+                if max_price_val >= 0:
+                    rooms = rooms.filter(price__lte=max_price_val)
+            except (ValueError, TypeError):
+                pass
+                
+        # Filtro por capacidad de huéspedes
         if guests:
-            rooms = rooms.filter(capacity__gte=guests)
+            try:
+                guests_val = int(guests)
+                if guests_val > 0:
+                    rooms = rooms.filter(capacity__gte=guests_val)
+            except (ValueError, TypeError):
+                pass
+                
+        # Filtro por estado (opcional)
+        if status_filter:
+            rooms = rooms.filter(status=status_filter)
+            
+        # Obtener estadísticas para mostrar
+        total_rooms = rooms.count()
+        available_rooms = rooms.filter(status='available').count()
+        
     else:
-        rooms = []
+        rooms = Room.objects.none()
+        total_rooms = 0
+        available_rooms = 0
     
     context = {
         'rooms': rooms,
         'room_types': Room.TYPE_CHOICES if Room else [],
+        'status_choices': Room.STATUS_CHOICES if Room else [],
+        'total_rooms': total_rooms,
+        'available_rooms': available_rooms,
+        'current_filters': {
+            'type': room_type,
+            'min_price': min_price,
+            'max_price': max_price,
+            'guests': guests,
+            'status': status_filter,
+        }
     }
     
     return render(request, 'client/rooms.html', context)
@@ -432,51 +465,170 @@ def client_booking_view(request, room_id=None):
         messages.warning(request, 'Debes iniciar sesión para hacer una reserva.')
         return redirect('client_login')
     
-    if Room:
-        if room_id:
-            try:
-                room = Room.objects.get(id=room_id, active=True)
-            except Room.DoesNotExist:
-                messages.error(request, 'Habitación no encontrada.')
+    if room_id:
+        try:
+            room = Room.objects.get(id=room_id, active=True)
+            if not room.available_for_booking:
+                messages.error(request, 'Esta habitación no está disponible para reservas.')
                 return redirect('client_rooms')
-        else:
-            room = None
+        except Room.DoesNotExist:
+            messages.error(request, 'Habitación no encontrada.')
+            return redirect('client_rooms')
     else:
         room = None
     
     if request.method == 'POST':
         # Procesar la reserva
+        room_id_post = request.POST.get('room') or room_id
         check_in = request.POST.get('check_in')
         check_out = request.POST.get('check_out')
         guests_count = request.POST.get('guests_count')
-        special_requests = request.POST.get('special_requests')
+        special_requests = request.POST.get('special_requests', '')
+        phone = request.POST.get('phone', '')
+        email = request.POST.get('email', '')
         
-        if room and check_in and check_out and guests_count:
+        if room_id_post and check_in and check_out and guests_count:
             try:
-                # Crear la reserva
-                booking = Booking.objects.create(
-                    client=request.user.client if hasattr(request.user, 'client') else None,
+                # Obtener la habitación si no está definida
+                if not room:
+                    room = Room.objects.get(id=room_id_post, active=True)
+                
+                # Validar capacidad
+                if int(guests_count) > room.capacity:
+                    messages.error(request, f'La habitación solo tiene capacidad para {room.capacity} personas.')
+                    return render(request, 'client/booking.html', {
+                        'room': room,
+                        'available_rooms': Room.objects.filter(active=True, status='available'),
+                    })
+                
+                # Validar fechas
+                from datetime import datetime
+                check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
+                check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
+                
+                if check_in_date >= check_out_date:
+                    messages.error(request, 'La fecha de salida debe ser posterior a la fecha de entrada.')
+                    return render(request, 'client/booking.html', {
+                        'room': room,
+                        'available_rooms': Room.objects.filter(active=True, status='available'),
+                    })
+                
+                # Validar que las fechas no sean en el pasado
+                from datetime import date
+                today = date.today()
+                if check_in_date < today:
+                    messages.error(request, 'La fecha de entrada no puede ser en el pasado.')
+                    return render(request, 'client/booking.html', {
+                        'room': room,
+                        'available_rooms': Room.objects.filter(active=True, status='available'),
+                    })
+                
+                # Validar disponibilidad de la habitación en las fechas seleccionadas
+                overlapping_bookings = Booking.objects.filter(
                     room=room,
-                    check_in_date=check_in,
-                    check_out_date=check_out,
-                    guests_count=guests_count,
-                    special_requests=special_requests,
-                    status='pending'
+                    status__in=['confirmed', 'pending'],
+                    check_in_date__lt=check_out_date,
+                    check_out_date__gt=check_in_date
                 )
                 
-                messages.success(request, 'Reserva creada exitosamente. Te contactaremos pronto para confirmarla.')
-                return redirect('client_my_bookings')
+                if overlapping_bookings.exists():
+                    messages.error(request, 'La habitación no está disponible en las fechas seleccionadas. Por favor elige otras fechas.')
+                    return render(request, 'client/booking.html', {
+                        'room': room,
+                        'available_rooms': Room.objects.filter(active=True, status='available'),
+                    })
+                
+                # Obtener o crear el cliente
+                if hasattr(request.user, 'client'):
+                    client = request.user.client
+                    # Actualizar información de contacto si se proporciona
+                    if phone:
+                        client.phone = phone
+                    if email:
+                        client.email = email
+                    client.save()
+                else:
+                    # Crear perfil de cliente si no existe
+                    import random
+                    client_email = email or request.user.email
+                    if not client_email or Client.objects.filter(email=client_email).exists():
+                        client_email = f'{request.user.username}_{random.randint(1000, 9999)}@hotel.com'
+                    
+                    client = Client.objects.create(
+                        user=request.user,
+                        first_name=request.user.first_name or request.user.username,
+                        last_name=request.user.last_name or 'Usuario',
+                        email=client_email,
+                        dni=f'{random.randint(10000000, 99999999)}',
+                        phone=phone or f'+54911{random.randint(1000000, 9999999)}'
+                    )
+                
+                # Calcular precio total
+                nights = (check_out_date - check_in_date).days
+                total_price = room.price_per_night * nights
+                
+                # Crear la reserva
+                booking = Booking.objects.create(
+                    client=client,
+                    room=room,
+                    check_in_date=check_in_date,
+                    check_out_date=check_out_date,
+                    guests_count=int(guests_count),
+                    special_requests=special_requests,
+                    total_price=total_price,
+                    status='confirmed'
+                )
+                
+                messages.success(request, f'¡Reserva #{booking.id} creada exitosamente! Habitación {room.number} del {check_in} al {check_out}. Total: ${booking.total_price}')
+                return redirect('client_booking_confirmation', booking_id=booking.id)
+                    
+            except ValidationError as e:
+                messages.error(request, f'Error de validación: {str(e)}')
             except Exception as e:
                 messages.error(request, f'Error al crear la reserva: {str(e)}')
         else:
             messages.error(request, 'Por favor completa todos los campos requeridos.')
     
+    # Obtener fechas mínimas para el formulario
+    from datetime import date, timedelta
+    today = date.today()
+    min_checkout = today + timedelta(days=1)
+    
     context = {
         'room': room,
-        'available_rooms': Room.objects.filter(active=True) if Room else [],
+        'available_rooms': Room.objects.filter(active=True, status='available'),
+        'today': today.isoformat(),
+        'min_checkout': min_checkout.isoformat(),
     }
     
     return render(request, 'client/booking.html', context)
+
+def client_booking_confirmation_view(request, booking_id):
+    """Vista de confirmación de reserva"""
+    if not request.user.is_authenticated:
+        messages.warning(request, 'Debes iniciar sesión para ver esta página.')
+        return redirect('client_login')
+    
+    try:
+        # Obtener la reserva
+        booking = Booking.objects.get(id=booking_id)
+        
+        # Verificar que la reserva pertenece al usuario actual
+        if booking.client.user != request.user:
+            messages.error(request, 'No tienes permiso para ver esta reserva.')
+            return redirect('client_rooms')
+        
+        context = {
+            'booking': booking,
+            'room': booking.room,
+            'client': booking.client,
+        }
+        
+        return render(request, 'client/booking_confirmation.html', context)
+        
+    except Booking.DoesNotExist:
+        messages.error(request, 'Reserva no encontrada.')
+        return redirect('client_rooms')
 
 def client_my_bookings_view(request):
     """Vista de las reservas del cliente"""
@@ -484,10 +636,30 @@ def client_my_bookings_view(request):
         messages.warning(request, 'Debes iniciar sesión para ver tus reservas.')
         return redirect('client_login')
     
-    if Booking:
+    if Booking and Client:
+        # Verificar si el usuario tiene un perfil de cliente
+        try:
+            client = Client.objects.get(user=request.user)
+        except Client.DoesNotExist:
+            # Crear perfil de cliente automáticamente
+            import random
+            email = request.user.email
+            if not email or Client.objects.filter(email=email).exists():
+                email = f'{request.user.username}_{random.randint(1000, 9999)}@hotel.com'
+            
+            client = Client.objects.create(
+                user=request.user,
+                first_name=request.user.first_name or request.user.username,
+                last_name=request.user.last_name or 'Usuario',
+                email=email,
+                dni=f'{random.randint(10000000, 99999999)}',  # DNI temporal
+                phone=f'+54911{random.randint(1000000, 9999999)}'  # Teléfono temporal
+            )
+            messages.info(request, 'Se ha creado tu perfil de cliente automáticamente.')
+        
         # Obtener reservas del cliente actual
         bookings = Booking.objects.filter(
-            client__user=request.user
+            client=client
         ).select_related('room').order_by('-created_at')
     else:
         bookings = []

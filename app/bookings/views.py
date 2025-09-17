@@ -253,7 +253,7 @@ def create_booking_final(request):
             'message': 'Reserva creada exitosamente',
             'booking_id': booking.id,
             'email_sent': email_result.get('success', False),
-            'redirect_url': f'/client/bookings/{booking.id}/'
+            'redirect_url': f'/portal/my-bookings/{booking.id}/'
         })
         
     except Exception as e:

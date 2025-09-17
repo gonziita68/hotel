@@ -56,3 +56,50 @@ class Room(models.Model):
             self.save()
             return True
         return False
+    
+    @property
+    def main_image(self):
+        """Obtiene la imagen principal de la habitación"""
+        main_img = self.images.filter(is_main=True).first()
+        if main_img:
+            return main_img.image.url
+        # Si no hay imagen principal, tomar la primera disponible
+        first_img = self.images.first()
+        if first_img:
+            return first_img.image.url
+        # Imagen por defecto si no hay ninguna
+        return "https://images.unsplash.com/photo-1566665797739-1674de7a421a?ixlib=rb-4.0.3&auto=format&fit=crop&w=500&q=80"
+    
+    @property
+    def all_images(self):
+        """Obtiene todas las imágenes de la habitación ordenadas"""
+        return self.images.all().order_by('-is_main', 'order', 'id')
+
+
+class RoomImage(models.Model):
+    """
+    Modelo para las imágenes de las habitaciones
+    """
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='rooms/', help_text="Imagen de la habitación")
+    alt_text = models.CharField(max_length=200, blank=True, help_text="Texto alternativo para la imagen")
+    is_main = models.BooleanField(default=False, help_text="Imagen principal de la habitación")
+    order = models.PositiveIntegerField(default=0, help_text="Orden de visualización")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Imagen de Habitación"
+        verbose_name_plural = "Imágenes de Habitaciones"
+        ordering = ['-is_main', 'order', 'id']
+    
+    def __str__(self):
+        main_text = " (Principal)" if self.is_main else ""
+        return f"Imagen de {self.room.number}{main_text}"
+    
+    def save(self, *args, **kwargs):
+        # Si esta imagen se marca como principal, desmarcar las demás
+        if self.is_main:
+            RoomImage.objects.filter(room=self.room, is_main=True).update(is_main=False)

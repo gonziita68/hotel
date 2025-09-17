@@ -36,6 +36,7 @@ from app.core.views import (
     # Vistas del portal de clientes
     client_index_view, client_rooms_view, client_room_detail_view,
     client_booking_view, client_my_bookings_view, client_booking_detail_view,
+    client_booking_confirmation_view,
     client_cancel_booking_view, client_profile_view, client_login_view,
     client_register_view, client_logout_view
 )
@@ -391,6 +392,7 @@ urlpatterns = [
     path("portal/rooms/<int:room_id>/", client_room_detail_view, name="client_room_detail"),
     path("portal/booking/", client_booking_view, name="client_booking"),
     path("portal/booking/<int:room_id>/", client_booking_view, name="client_booking_room"),
+    path("portal/booking-confirmation/<int:booking_id>/", client_booking_confirmation_view, name="client_booking_confirmation"),
     path("portal/my-bookings/", client_my_bookings_view, name="client_my_bookings"),
     path("portal/my-bookings/<int:booking_id>/", client_booking_detail_view, name="client_booking_detail"),
     path("portal/my-bookings/<int:booking_id>/cancel/", client_cancel_booking_view, name="client_cancel_booking"),
