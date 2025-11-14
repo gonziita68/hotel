@@ -26,11 +26,13 @@ from config.settings import API_TITLE, API_DESCRIPTION, API_VERSION
 from django.http import HttpResponse
 import json
 from enum import Enum
+from app.clients.views import clients_api_collection
+from app.bookings.views import bookings_api_collection, booking_api_detail, create_booking_api, update_booking_api
 
 # Importar vistas web
 from app.core.views import (
     login_view, register_view, logout_view, dashboard_view,
-    profile_view, settings_view, rooms_view, bookings_view,
+    profile_view, settings_view, bookings_view,
     clients_view, cleaning_view, maintenance_view,
     administration_view, reports_view, dashboard_metrics_api,
     # Vistas del portal de clientes
@@ -40,6 +42,9 @@ from app.core.views import (
     client_cancel_booking_view, client_profile_view, client_login_view,
     client_register_view, client_logout_view, get_room_availability
 )
+from app.core.views import client_simulate_payment_view, client_booking_pdf_view
+from app.rooms.views import rooms_view, rooms_api_collection, room_api_detail, export_rooms_csv
+from app.bookings.views import export_bookings_csv
 
 # Importar vistas de reservas
 from app.bookings.views import (
@@ -349,6 +354,17 @@ def scalar_html(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", api.urls),
+
+    # Endpoints REST de habitaciones para el dashboard
+    path("api/rooms/", rooms_api_collection, name="rooms_api_collection"),
+    path("api/rooms/<int:room_id>/", room_api_detail, name="room_api_detail"),
+
+    # Endpoints REST de clientes para el dashboard
+    path("api/clients/", clients_api_collection, name="clients_api_collection"),
+
+    # Endpoints REST de reservas para el dashboard
+    path("api/bookings/", bookings_api_collection, name="bookings_api_collection"),
+    path("api/bookings/<int:booking_id>/", booking_api_detail, name="booking_api_detail"),
     
     # Rutas web
     path("", dashboard_view, name="dashboard"),
@@ -377,6 +393,7 @@ urlpatterns = [
     
     # Rutas de módulos
     path("rooms/", rooms_view, name="rooms"),
+    path("rooms/export/csv/", export_rooms_csv, name="rooms_export_csv"),
     path("bookings/", bookings_view, name="bookings"),
     path("clients/", clients_view, name="clients"),
     path("cleaning/", cleaning_view, name="cleaning"),
@@ -413,6 +430,17 @@ urlpatterns = [
     path("bookings/<int:booking_id>/", booking_detail, name="booking_detail"),
     path("bookings/<int:booking_id>/cancel/", cancel_booking, name="cancel_booking"),
     path("my-bookings/", my_bookings, name="my_bookings"),
-    
+    path('portal/my-bookings/<int:booking_id>/pay/simulate/', client_simulate_payment_view, name='client_simulate_payment'),
+    path("bookings/export/csv/", export_bookings_csv, name='export_bookings_csv'),
 
+    # PDF de reserva
+    path('portal/my-bookings/<int:booking_id>/pdf/', client_booking_pdf_view, name='client_booking_pdf'),
+
+    # APIs de reservas
+    path('api/bookings/', create_booking_api, name='create_booking_api'),
+    path('api/bookings/<int:booking_id>/', booking_api_detail, name='booking_api_detail'),
+    path('api/bookings/<int:booking_id>/update/', update_booking_api, name='update_booking_api'),
+
+    # Admin booking detail (backend)
+    path('admin/bookings/<int:booking_id>/', booking_detail, name='booking_detail'),
 ]

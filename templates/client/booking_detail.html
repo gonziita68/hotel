@@ -193,6 +193,20 @@
                                         <p class="mb-0 small">Parcial</p>
                                     </div>
                                     {% endif %}
+                                    {% if booking.payment_status == 'pending' %}
+                                    <div class="mt-3">
+                                      <form method="post" action="{% url 'client_simulate_payment' booking.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-sm">Simular pago exitoso</button>
+                                      </form>
+                                      <form method="post" action="{% url 'client_simulate_payment' booking.id %}" class="d-inline ms-2">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="result" value="partial" />
+                                        <input type="number" name="amount" class="form-control form-control-sm d-inline-block" style="width:140px" placeholder="Monto" min="0.01" step="0.01" max="{{ booking.total_price }}" required />
+                                        <button type="submit" class="btn btn-warning btn-sm ms-2">Simular pago parcial</button>
+                                      </form>
+                                    </div>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
@@ -212,7 +226,7 @@
                             {% endif %}
                             
                             {% if booking.status == 'confirmed' %}
-                            <button type="button" class="btn btn-outline-primary">
+                            <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modifyModal">
                                 <i class="fas fa-edit me-2"></i>Modificar Reserva
                             </button>
                             {% endif %}
@@ -221,9 +235,9 @@
                                 <i class="fas fa-print me-2"></i>Imprimir
                             </button>
                             
-                            <button type="button" class="btn btn-outline-info">
+                            <a class="btn btn-outline-info" href="{% url 'client_booking_pdf' booking.id %}">
                                 <i class="fas fa-download me-2"></i>Descargar PDF
-                            </button>
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -361,6 +375,47 @@
         </div>
     </div>
 </div>
+
+<!-- Modify Booking Modal -->
+<div class="modal fade" id="modifyModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Modificar Reserva</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="modifyForm">
+          <div class="mb-3">
+            <label class="form-label">Fecha de llegada</label>
+            <input type="date" class="form-control" name="check_in_date" value="{{ booking.check_in_date|date:'Y-m-d' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Fecha de salida</label>
+            <input type="date" class="form-control" name="check_out_date" value="{{ booking.check_out_date|date:'Y-m-d' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Huéspedes</label>
+            <input type="number" class="form-control" name="guests_count" min="1" max="{{ booking.room.capacity }}" value="{{ booking.guests_count }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Solicitudes especiales</label>
+            <textarea class="form-control" name="special_requests" rows="3" placeholder="Ej: Cuna, vista, etc.">{{ booking.special_requests }}</textarea>
+          </div>
+        </form>
+        <div class="alert alert-info small">
+          Se validará disponibilidad automáticamente. Si las nuevas fechas no están disponibles, verás un error.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-primary" onclick="submitModify({{ booking.id }})">
+          <i class="fas fa-save me-2"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_css %}
@@ -427,6 +482,35 @@
         
         const modal = new bootstrap.Modal(document.getElementById('cancelModal'));
         modal.show();
+    }
+
+    async function submitModify(bookingId) {
+      const form = document.getElementById('modifyForm');
+      const data = {
+        check_in_date: form.check_in_date.value,
+        check_out_date: form.check_out_date.value,
+        guests_count: form.guests_count.value,
+        special_requests: form.special_requests.value
+      };
+
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}/`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || 'No se pudo actualizar la reserva');
+        }
+        // Cerrar modal y refrescar la página para ver cambios
+        bootstrap.Modal.getInstance(document.getElementById('modifyModal')).hide();
+        location.reload();
+      } catch (err) {
+        alert(err.message);
+      }
     }
 </script>
 {% endblock %}

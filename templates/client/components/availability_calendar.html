@@ -201,7 +201,7 @@
 </style>
 
 <script>
-class AvailabilityCalendar {
+var AvailabilityCalendar = window.AvailabilityCalendar || class AvailabilityCalendar {
     constructor(roomId) {
         this.roomId = roomId;
         this.currentDate = new Date();

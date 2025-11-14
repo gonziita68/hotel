@@ -193,6 +193,25 @@
                             <div class="form-text">Selecciona la fecha de salida</div>
                         </div>
                     </div>
+
+                    <!-- Indicador de disponibilidad -->
+                    <div id="availabilityHint" class="alert alert-info d-none" role="alert">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <span id="availabilityText">Selecciona fechas para verificar disponibilidad…</span>
+                    </div>
+
+                    <!-- Sugerencias de fechas -->
+                    <div id="suggestionsBox" class="d-none mt-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <i class="fas fa-lightbulb me-2"></i>
+                                Sugerencias de fechas con disponibilidad
+                            </div>
+                            <div class="card-body">
+                                <div id="suggestionsList" class="d-flex flex-wrap gap-2"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Número de Huéspedes -->
@@ -221,7 +240,7 @@
                     <a href="{% url 'client_index' %}" class="btn btn-outline-secondary me-md-2">
                         <i class="fas fa-arrow-left me-2"></i>Cancelar
                     </a>
-                    <button type="submit" class="btn btn-primary">
+                    <button type="submit" class="btn btn-primary" id="submitBtn">
                         Continuar <i class="fas fa-arrow-right ms-2"></i>
                     </button>
                 </div>
@@ -238,16 +257,101 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkOutDate = document.getElementById('check_out_date');
     const guestsCount = document.getElementById('guests_count');
     const form = document.getElementById('bookingForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const availabilityHint = document.getElementById('availabilityHint');
+    const availabilityText = document.getElementById('availabilityText');
+    const suggestionsBox = document.getElementById('suggestionsBox');
+    const suggestionsList = document.getElementById('suggestionsList');
 
-    // Establecer fecha mínima (mañana)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
-    
-    checkInDate.min = tomorrowStr;
-    checkOutDate.min = tomorrowStr;
+    // Cache de días ocupados por consulta de 1 noche
+    const busyDayCache = {}; // { 'YYYY-MM-DD': boolean }
 
-    // Validar fechas
+    // Helper: sumar días a una fecha (YYYY-MM-DD) y devolver YYYY-MM-DD
+    function addDays(dateStr, days) {
+        const d = new Date(dateStr);
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+    }
+
+    async function singleDayAvailability(dateStr) {
+        if (!dateStr) return true; // no bloquear si no hay valor
+        if (busyDayCache[dateStr] !== undefined) return busyDayCache[dateStr];
+        const params = new URLSearchParams({
+            fecha_inicio: dateStr,
+            fecha_fin: addDays(dateStr, 1),
+            personas: guestsCount.value || '1'
+        });
+        try {
+            const resp = await fetch(`/api/habitaciones-disponibles/?${params.toString()}`);
+            const data = await resp.json();
+            const available = !!(data.success && data.total_rooms > 0);
+            busyDayCache[dateStr] = available;
+            return available;
+        } catch (_) {
+            // Si falla la consulta, no bloqueamos para no entorpecer al usuario
+            return true;
+        }
+    }
+
+    async function findNextAvailableDay(startDateStr, maxOffset = 14) {
+        for (let offset = 1; offset <= maxOffset; offset++) {
+            const candidate = addDays(startDateStr, offset);
+            // respetar el mínimo (mañana)
+            if (candidate < checkInDate.min) continue;
+            const ok = await singleDayAvailability(candidate);
+            if (ok) return candidate;
+        }
+        return null;
+    }
+
+    async function blockIfFullyBooked(inputEl, label = 'fecha') {
+        const value = inputEl.value;
+        if (!value) return;
+        const ok = await singleDayAvailability(value);
+        if (ok) return;
+        const next = await findNextAvailableDay(value);
+        if (next) {
+            inputEl.value = next;
+            setHint('warning', `La ${label} seleccionada está ocupada. Te moví a ${next}.`);
+            debouncedCheck();
+        } else {
+            setHint('danger', `No encontramos disponibilidad cercana para la ${label}.`);
+            submitBtn.disabled = true;
+        }
+    }
+
+    async function handleCheckInDayBlock() {
+        await blockIfFullyBooked(checkInDate, 'fecha de llegada');
+    }
+
+    async function handleCheckOutDayBlock() {
+        // Para salida, validamos la noche previa (última noche)
+        const value = checkOutDate.value;
+        if (!value || !checkInDate.value) return;
+        const lastNight = addDays(value, -1);
+        const ok = await singleDayAvailability(lastNight);
+        if (!ok) {
+            const next = await findNextAvailableDay(lastNight);
+            if (next) {
+                // ajustar salida para mantener misma duración mínima (1 noche)
+                const newOut = addDays(next, 1);
+                checkOutDate.value = newOut;
+                setHint('warning', `La noche previa a la salida está ocupada. Ajusté la salida a ${newOut}.`);
+                debouncedCheck();
+            } else {
+                setHint('danger', 'No encontramos disponibilidad cercana para la salida.');
+                submitBtn.disabled = true;
+            }
+        }
+    }
+
+    function setHint(type, text) {
+        // type: info | success | warning | danger
+        availabilityHint.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+        availabilityHint.classList.add('alert-' + type);
+        availabilityText.textContent = text;
+    }
+
     function validateDates() {
         const checkIn = new Date(checkInDate.value);
         const checkOut = new Date(checkOutDate.value);
@@ -255,60 +359,152 @@ document.addEventListener('DOMContentLoaded', function() {
         today.setHours(0, 0, 0, 0);
 
         // Validar fecha de llegada
-        if (checkIn <= today) {
-            checkInDate.setCustomValidity('La fecha de llegada debe ser al menos mañana');
+        if (!checkInDate.value) {
+            setHint('info', 'Selecciona la fecha de llegada.');
+            submitBtn.disabled = true;
             return false;
-        } else {
-            checkInDate.setCustomValidity('');
+        }
+        if (checkIn <= today) {
+            setHint('warning', 'La fecha de llegada debe ser al menos mañana.');
+            submitBtn.disabled = true;
+            return false;
         }
 
         // Validar fecha de salida
-        if (checkOut <= checkIn) {
-            checkOutDate.setCustomValidity('La fecha de salida debe ser posterior a la fecha de llegada');
+        if (!checkOutDate.value) {
+            setHint('info', 'Selecciona la fecha de salida.');
+            submitBtn.disabled = true;
             return false;
-        } else {
-            checkOutDate.setCustomValidity('');
+        }
+        if (checkOut <= checkIn) {
+            setHint('warning', 'La fecha de salida debe ser posterior a la de llegada.');
+            submitBtn.disabled = true;
+            return false;
+        }
+
+        // Validar cantidad de personas
+        if (!guestsCount.value) {
+            setHint('info', 'Selecciona la cantidad de personas.');
+            submitBtn.disabled = true;
+            return false;
         }
 
         return true;
     }
 
-    // Event listeners
-    checkInDate.addEventListener('change', function() {
-        // Establecer fecha mínima de salida
-        const checkIn = new Date(this.value);
-        const nextDay = new Date(checkIn);
-        nextDay.setDate(nextDay.getDate() + 1);
-        checkOutDate.min = nextDay.toISOString().split('T')[0];
-        
-        // Si la fecha de salida es anterior, actualizarla
-        if (checkOutDate.value && new Date(checkOutDate.value) <= checkIn) {
-            checkOutDate.value = nextDay.toISOString().split('T')[0];
+    let availabilityTimer;
+    async function checkAvailability() {
+        if (!validateDates()) return;
+
+        const params = new URLSearchParams({
+            fecha_inicio: checkInDate.value,
+            fecha_fin: checkOutDate.value,
+            personas: guestsCount.value || '1'
+        });
+
+        setHint('info', 'Verificando disponibilidad…');
+        submitBtn.disabled = true;
+        suggestionsBox.classList.add('d-none');
+        suggestionsList.innerHTML = '';
+
+        try {
+            const resp = await fetch(`/api/habitaciones-disponibles/?${params.toString()}`);
+            const data = await resp.json();
+
+            if (!data.success) {
+                setHint('danger', data.message || 'Error al consultar disponibilidad.');
+                submitBtn.disabled = true;
+                return;
+            }
+
+            if (data.total_rooms > 0) {
+                setHint('success', `Hay ${data.total_rooms} habitaciones disponibles para esas fechas.`);
+                submitBtn.disabled = false;
+            } else {
+                setHint('danger', 'No hay habitaciones disponibles para esas fechas.');
+                submitBtn.disabled = true;
+                // Buscar sugerencias
+                await loadSuggestions();
+            }
+        } catch (err) {
+            setHint('danger', 'No se pudo verificar disponibilidad. Intenta nuevamente.');
+            submitBtn.disabled = true;
         }
-        
-        validateDates();
-    });
+    }
 
-    checkOutDate.addEventListener('change', validateDates);
+    async function loadSuggestions() {
+        // Busca próximos rangos disponibles manteniendo la misma duración
+        const durationDays = Math.ceil((new Date(checkOutDate.value) - new Date(checkInDate.value)) / (24*60*60*1000));
+        if (durationDays <= 0) return;
 
-    // Validación del formulario
+        const maxOffset = 14; // buscar hasta dos semanas hacia adelante
+        const maxSuggestions = 3;
+        let found = 0;
+        const baseCheckIn = new Date(checkInDate.value);
+
+        for (let offset = 1; offset <= maxOffset && found < maxSuggestions; offset++) {
+            const altCheckIn = new Date(baseCheckIn);
+            altCheckIn.setDate(altCheckIn.getDate() + offset);
+            const altCheckOut = new Date(altCheckIn);
+            altCheckOut.setDate(altCheckOut.getDate() + durationDays);
+
+            const params = new URLSearchParams({
+                fecha_inicio: altCheckIn.toISOString().split('T')[0],
+                fecha_fin: altCheckOut.toISOString().split('T')[0],
+                personas: guestsCount.value || '1'
+            });
+
+            try {
+                const resp = await fetch(`/api/habitaciones-disponibles/?${params.toString()}`);
+                const data = await resp.json();
+                if (data.success && data.total_rooms > 0) {
+                    // Agregar botón de sugerencia
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn btn-outline-primary btn-sm';
+                    const startStr = params.get('fecha_inicio').split('-').reverse().join('/');
+                    const endStr = params.get('fecha_fin').split('-').reverse().join('/');
+                    btn.textContent = `${startStr} → ${endStr} (${data.total_rooms} hab.)`;
+                    btn.addEventListener('click', () => {
+                        checkInDate.value = params.get('fecha_inicio');
+                        checkOutDate.value = params.get('fecha_fin');
+                        debouncedCheck();
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    });
+                    suggestionsList.appendChild(btn);
+                    found++;
+                }
+            } catch (_) { /* ignorar errores puntuales */ }
+        }
+
+        if (found > 0) {
+            suggestionsBox.classList.remove('d-none');
+        }
+    }
+
+    function debouncedCheck() {
+        clearTimeout(availabilityTimer);
+        availabilityTimer = setTimeout(checkAvailability, 300);
+    }
+
+    // Eventos
+    checkInDate.addEventListener('change', debouncedCheck);
+    checkOutDate.addEventListener('change', debouncedCheck);
+    guestsCount.addEventListener('change', debouncedCheck);
+
+    // Primera verificación si ya hay valores preseleccionados
+    if (checkInDate.value && checkOutDate.value) {
+        debouncedCheck();
+    } else {
+        setHint('info', 'Selecciona fechas para verificar disponibilidad…');
+        submitBtn.disabled = true;
+    }
+
+    // Validación al enviar
     form.addEventListener('submit', function(e) {
         if (!validateDates()) {
             e.preventDefault();
-            return false;
         }
-
-        if (!guestsCount.value) {
-            e.preventDefault();
-            guestsCount.focus();
-            return false;
-        }
-
-        // Mostrar loading
-        const submitBtn = form.querySelector('button[type="submit"]');
-        const originalText = submitBtn.innerHTML;
-        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Procesando...';
-        submitBtn.disabled = true;
     });
 });
 </script>

@@ -6,7 +6,7 @@ from django.contrib.auth.forms import UserCreationForm
 from app.clients.forms import ClientRegistrationForm
 from django.contrib.auth.models import User
 from django.db.models import Count, Sum, Q
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from datetime import datetime, timedelta
 import locale
 from .utils import log_user_action
@@ -411,9 +411,11 @@ def client_rooms_view(request):
             except (ValueError, TypeError):
                 pass
                 
-        # Filtro por estado (opcional)
+        # Filtro por estado (opcional). Si no se especifica, mostrar solo disponibles
         if status_filter:
             rooms = rooms.filter(status=status_filter)
+        else:
+            rooms = rooms.filter(status='available')
             
         # Obtener estadísticas para mostrar
         total_rooms = rooms.count()
@@ -914,3 +916,157 @@ def update_client_additional_fields(user, form_data):
             client.save()
     except Exception:
         pass  # Ignorar errores silenciosamente
+
+
+def client_simulate_payment_view(request, booking_id):
+    """Simula el pago de una reserva desde el portal del cliente."""
+    if not request.user.is_authenticated:
+        messages.warning(request, 'Debes iniciar sesión para realizar pagos.')
+        return redirect('client_login')
+
+    if request.method != 'POST':
+        messages.error(request, 'Método no permitido.')
+        return redirect('client_booking_detail', booking_id=booking_id)
+
+    try:
+        from django.db import transaction
+        with transaction.atomic():
+            booking = Booking.objects.select_for_update().get(
+                id=booking_id,
+                client__user=request.user
+            )
+
+            if booking.status not in ['pending', 'confirmed']:
+                messages.error(request, 'La reserva no está en estado válido para pago.')
+                return redirect('client_booking_detail', booking_id=booking_id)
+
+            # Simulación de pago con soporte de monto parcial
+            result = request.POST.get('result', 'success')
+            from decimal import Decimal, InvalidOperation
+
+            if result == 'partial':
+                amount_str = request.POST.get('amount')
+                if not amount_str:
+                    messages.error(request, 'Debes ingresar un monto para el pago parcial.')
+                    return redirect('client_booking_detail', booking_id=booking_id)
+                try:
+                    amount = Decimal(amount_str)
+                except (InvalidOperation, TypeError):
+                    messages.error(request, 'Monto inválido para pago parcial.')
+                    return redirect('client_booking_detail', booking_id=booking_id)
+                if amount <= Decimal('0'):
+                    messages.error(request, 'El monto debe ser mayor a 0.')
+                    return redirect('client_booking_detail', booking_id=booking_id)
+
+                # Acumular pagos parciales
+                current_paid = booking.paid_amount or Decimal('0')
+                new_paid = current_paid + amount
+
+                # Determinar estado según total
+                total = booking.total_price or Decimal('0')
+                if new_paid >= total:
+                    booking.payment_status = 'paid'
+                    booking.paid_amount = total
+                else:
+                    booking.payment_status = 'partial'
+                    booking.paid_amount = new_paid
+
+            else:
+                # Pago exitoso total
+                booking.payment_status = 'paid'
+                booking.paid_amount = booking.total_price
+
+            booking.save()
+
+        # Enviar email de confirmación/recibo de pago
+        try:
+            from .services import EmailService
+            EmailService.send_payment_confirmation(booking.id)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(f"Fallo el envío de email de pago para reserva {booking.id}")
+
+        messages.success(request, 'Pago simulado procesado correctamente.')
+        return redirect('client_booking_detail', booking_id=booking_id)
+
+    except Booking.DoesNotExist:
+        messages.error(request, 'Reserva no encontrada.')
+        return redirect('client_my_bookings')
+    except Exception:
+        messages.error(request, 'Ocurrió un error al procesar el pago simulado.')
+        return redirect('client_booking_detail', booking_id=booking_id)
+
+# --- PDF de Reserva (Cliente) ---
+@login_required
+def client_booking_pdf_view(request, booking_id):
+    """Genera y descarga un PDF simple con los datos de la reserva del cliente."""
+    # Restringir a que el usuario sea dueño de la reserva (si no es staff)
+    try:
+        if request.user.is_staff:
+            booking = Booking.objects.get(id=booking_id)
+        else:
+            booking = Booking.objects.get(id=booking_id, client__user=request.user)
+    except Booking.DoesNotExist:
+        messages.error(request, 'Reserva no encontrada.')
+        return redirect('client_my_bookings')
+
+    # Generar PDF con ReportLab
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="reserva_{booking.id}.pdf"'
+
+        c = canvas.Canvas(response, pagesize=A4)
+        width, height = A4
+
+        # Encabezado
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(20*mm, height - 25*mm, "O11CE Hotel - Detalle de Reserva")
+        c.setFont("Helvetica", 10)
+        c.drawString(20*mm, height - 32*mm, f"Fecha de generación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+        # Datos de reserva
+        y = height - 50*mm
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(20*mm, y, f"Reserva #{booking.id}")
+        y -= 8*mm
+        c.setFont("Helvetica", 11)
+        c.drawString(20*mm, y, f"Habitación: {booking.room.get_type_display} (N° {booking.room.number})")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Check-in: {booking.check_in_date.strftime('%d/%m/%Y')}  -  Check-out: {booking.check_out_date.strftime('%d/%m/%Y')}")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Duración: {booking.duration} noche(s)")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Huéspedes: {booking.guests_count}")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Estado: {booking.status}")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Pago: {booking.payment_status}")
+        y -= 7*mm
+        c.drawString(20*mm, y, f"Total: ${booking.total_price}")
+        
+        # Solicitudes especiales
+        if booking.special_requests:
+            y -= 12*mm
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(20*mm, y, "Solicitudes Especiales:")
+            y -= 7*mm
+            c.setFont("Helvetica", 10)
+            # Partir texto si es largo
+            import textwrap
+            for line in textwrap.wrap(booking.special_requests, width=80):
+                c.drawString(20*mm, y, line)
+                y -= 6*mm
+
+        # Pie de página
+        c.setFont("Helvetica", 9)
+        c.drawString(20*mm, 15*mm, "Gracias por elegir O11CE Hotel. Tel: +1234567890 | soporte@o11ce.com")
+
+        c.showPage()
+        c.save()
+        return response
+    except Exception:
+        messages.error(request, 'No se pudo generar el PDF. Contacta soporte.')
+        return redirect('client_booking_detail', booking_id=booking_id)

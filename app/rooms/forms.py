@@ -133,24 +133,24 @@ class RoomImageForm(forms.ModelForm):
     
     class Meta:
         model = RoomImage
-        fields = ['image', 'caption', 'is_primary']
+        fields = ['image', 'alt_text', 'is_main']
         widgets = {
             'image': forms.FileInput(attrs={
                 'class': 'form-control',
                 'accept': 'image/*'
             }),
-            'caption': forms.TextInput(attrs={
+            'alt_text': forms.TextInput(attrs={
                 'class': 'form-control',
-                'placeholder': 'Descripción de la imagen (opcional)'
+                'placeholder': 'Texto alternativo (opcional)'
             }),
-            'is_primary': forms.CheckboxInput(attrs={
+            'is_main': forms.CheckboxInput(attrs={
                 'class': 'form-check-input'
             })
         }
         labels = {
             'image': 'Imagen',
-            'caption': 'Descripción',
-            'is_primary': 'Imagen Principal'
+            'alt_text': 'Texto alternativo',
+            'is_main': 'Imagen Principal'
         }
 
     def clean_image(self):
@@ -172,13 +172,13 @@ class RoomFilterForm(forms.Form):
     """Formulario para filtrar habitaciones"""
     
     status = forms.ChoiceField(
-        choices=[('', 'Todos los estados')] + Room.ROOM_STATUS_CHOICES,
+        choices=[('', 'Todos los estados')] + Room.STATUS_CHOICES,
         required=False,
         widget=forms.Select(attrs={'class': 'form-select'})
     )
     
     type = forms.ChoiceField(
-        choices=[('', 'Todos los tipos')] + Room.ROOM_TYPES,
+        choices=[('', 'Todos los tipos')] + Room.TYPE_CHOICES,
         required=False,
         widget=forms.Select(attrs={'class': 'form-select'})
     )
@@ -226,7 +226,7 @@ class BulkRoomStatusForm(forms.Form):
     
     room_ids = forms.CharField(widget=forms.HiddenInput())
     new_status = forms.ChoiceField(
-        choices=Room.ROOM_STATUS_CHOICES,
+        choices=Room.STATUS_CHOICES,
         widget=forms.Select(attrs={'class': 'form-select'})
     )
     

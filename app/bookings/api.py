@@ -57,7 +57,8 @@ def create_booking_with_client(request, payload: CreateBookingRequest):
             
             # Verificar que la habitación existe
             try:
-                room = Room.objects.get(id=payload.habitacion_id)
+                # Bloqueo de fila para evitar doble reserva en bases que lo soportan
+                room = Room.objects.select_for_update().get(id=payload.habitacion_id)
             except Room.DoesNotExist:
                 return {
                     "success": False,
@@ -85,7 +86,7 @@ def create_booking_with_client(request, payload: CreateBookingRequest):
                 check_out_date__gt=payload.fecha_inicio
             )
             
-            if conflicting_bookings.exists():
+            if conflicting_bookings.select_for_update().exists():
                 return {
                     "success": False,
                     "message": "La habitación no está disponible para las fechas solicitadas",
@@ -257,4 +258,4 @@ def resend_booking_confirmation_email(request, booking_id: int):
         return {
             "success": False,
             "message": f"Error al reenviar email: {str(e)}"
-        } 
+        }

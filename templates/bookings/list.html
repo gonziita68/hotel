@@ -80,9 +80,14 @@
                     <!-- Header -->
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h1 class="h3 mb-0">Gestión de Reservas</h1>
-                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addBookingModal">
-                            <i class="fas fa-plus"></i> Nueva Reserva
-                        </button>
+                        <div>
+                            <button id="exportBookingsCsvBtn" class="btn btn-outline-success me-2" onclick="exportBookingsCsv()">
+                                <i class="fas fa-file-csv"></i> Exportar CSV
+                            </button>
+                            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addBookingModal">
+                                <i class="fas fa-plus"></i> Nueva Reserva
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Filters -->
@@ -345,34 +350,209 @@ document.addEventListener('DOMContentLoaded', function() {
     paymentFilter.addEventListener('change', filterBookings);
     checkInFilter.addEventListener('change', filterBookings);
     searchInput.addEventListener('input', filterBookings);
+
+    // ----- CRUD via API: poblar selects y enviar formulario -----
+    const addBookingForm = document.getElementById('addBookingForm');
+    const modalEl = document.getElementById('addBookingModal');
+    const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+
+    function getCSRFToken() {
+        const el = document.querySelector('input[name="csrfmiddlewaretoken"]');
+        return el ? el.value : '';
+    }
+
+    async function apiFetch(url, options = {}) {
+        const headers = options.headers || {};
+        if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        headers['X-CSRFToken'] = getCSRFToken();
+        const resp = await fetch(url, { ...options, headers });
+        const contentType = resp.headers.get('content-type') || '';
+        const isJson = contentType.includes('application/json');
+        const data = isJson ? await resp.json() : null;
+        if (!resp.ok) {
+            const msg = (data && (data.error || data.message)) || `Error ${resp.status}`;
+            throw new Error(msg);
+        }
+        return data;
+    }
+
+    async function populateClients() {
+        const select = addBookingForm?.querySelector('select[name="client"]');
+        if (!select) return;
+        select.innerHTML = '<option value="">Cargando clientes...</option>';
+        try {
+            const clients = await apiFetch('/api/clients/', { method: 'GET' });
+            select.innerHTML = '<option value="">Seleccionar cliente...</option>' +
+                clients.map(c => `<option value="${c.id}">${c.full_name} (${c.email || ''})</option>`).join('');
+        } catch (e) {
+            select.innerHTML = '<option value="">Error al cargar clientes</option>';
+            console.error(e);
+        }
+    }
+
+    async function populateRooms() {
+        const select = addBookingForm?.querySelector('select[name="room"]');
+        if (!select) return;
+        select.innerHTML = '<option value="">Cargando habitaciones...</option>';
+        try {
+            const rooms = await apiFetch('/api/rooms/?status=available', { method: 'GET' });
+            select.innerHTML = '<option value="">Seleccionar habitación...</option>' +
+                rooms.map(r => `<option value="${r.id}">#${r.number} - ${r.type_display || r.type} (${r.capacity} pax)</option>`).join('');
+        } catch (e) {
+            select.innerHTML = '<option value="">Error al cargar habitaciones</option>';
+            console.error(e);
+        }
+    }
+
+    if (modalEl) {
+        modalEl.addEventListener('shown.bs.modal', () => {
+            populateClients();
+            populateRooms();
+        });
+    }
+
+    if (addBookingForm) {
+        addBookingForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const clientId = addBookingForm.querySelector('select[name="client"]').value;
+            const roomId = addBookingForm.querySelector('select[name="room"]').value;
+            const checkIn = addBookingForm.querySelector('input[name="check_in_date"]').value;
+            const checkOut = addBookingForm.querySelector('input[name="check_out_date"]').value;
+            const guests = addBookingForm.querySelector('input[name="guests_count"]').value || '1';
+            const payment = addBookingForm.querySelector('select[name="payment_status"]').value || 'pending';
+            const special = addBookingForm.querySelector('textarea[name="special_requests"]').value || '';
+
+            const submitBtn = addBookingForm.querySelector('button[type="submit"]');
+            const original = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Creando...';
+
+            try {
+                await apiFetch('/api/bookings/', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        client_id: Number(clientId),
+                        room_id: Number(roomId),
+                        check_in_date: checkIn,
+                        check_out_date: checkOut,
+                        guests_count: Number(guests),
+                        payment_status: payment,
+                        special_requests: special
+                    })
+                });
+                alert('Reserva creada exitosamente');
+                if (modal) modal.hide();
+                window.location.reload();
+            } catch (err) {
+                alert(err.message || 'Error al crear la reserva');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = original;
+            }
+        });
+    }
 });
 
 // Booking management functions
 function viewBooking(bookingId) {
-    // Implement view functionality
-    console.log('View booking:', bookingId);
+    window.location.href = `/bookings/${bookingId}/`;
 }
 
-function confirmBooking(bookingId) {
-    if (confirm('¿Confirmar esta reserva?')) {
-        // Implement confirm functionality
-        console.log('Confirm booking:', bookingId);
+async function confirmBooking(bookingId) {
+    if (!confirm('¿Confirmar esta reserva?')) return;
+    try {
+        await fetch(`/api/bookings/${bookingId}/`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('input[name="csrfmiddlewaretoken"]').value
+            },
+            body: JSON.stringify({ status: 'confirmed' })
+        }).then(async r => {
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || d.message || `Error ${r.status}`);
+            return d;
+        });
+        alert('Reserva confirmada');
+        window.location.reload();
+    } catch (e) {
+        alert(e.message || 'Error al confirmar la reserva');
     }
 }
 
-function cancelBooking(bookingId) {
+async function cancelBooking(bookingId) {
     const reason = prompt('Motivo de cancelación:');
-    if (reason !== null) {
-        // Implement cancel functionality
-        console.log('Cancel booking:', bookingId, 'Reason:', reason);
+    if (reason === null) return;
+    try {
+        await fetch(`/api/bookings/${bookingId}/`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('input[name="csrfmiddlewaretoken"]').value
+            },
+            body: JSON.stringify({ status: 'cancelled', cancellation_reason: reason })
+        }).then(async r => {
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || d.message || `Error ${r.status}`);
+            return d;
+        });
+        alert('Reserva cancelada');
+        window.location.reload();
+    } catch (e) {
+        alert(e.message || 'Error al cancelar la reserva');
     }
 }
 
-function completeBooking(bookingId) {
-    if (confirm('¿Finalizar esta reserva?')) {
-        // Implement complete functionality
-        console.log('Complete booking:', bookingId);
+async function completeBooking(bookingId) {
+    if (!confirm('¿Finalizar esta reserva?')) return;
+    try {
+        await fetch(`/api/bookings/${bookingId}/`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('input[name="csrfmiddlewaretoken"]').value
+            },
+            body: JSON.stringify({ status: 'completed' })
+        }).then(async r => {
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || d.message || `Error ${r.status}`);
+            return d;
+        });
+        alert('Reserva finalizada');
+        window.location.reload();
+    } catch (e) {
+        alert(e.message || 'Error al finalizar la reserva');
     }
+}
+
+function exportBookingsCsv() {
+    const btn = document.getElementById('exportBookingsCsvBtn');
+    if (!btn) return;
+    const status = document.getElementById('statusFilter')?.value || '';
+    const payment = document.getElementById('paymentFilter')?.value || '';
+    const check_in = document.getElementById('checkInFilter')?.value || '';
+    const search = document.getElementById('searchInput')?.value || '';
+
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (payment) params.append('payment', payment);
+    if (check_in) params.append('check_in', check_in);
+    if (search) params.append('search', search);
+
+    const url = `/bookings/export/csv/${params.toString() ? '?' + params.toString() : ''}`;
+
+    btn.disabled = true;
+    const original = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Generando...';
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'reservas.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 1500);
 }
 </script>
 {% endblock %}

@@ -331,6 +331,23 @@
                             <span class="detail-label">Método:</span>
                             <span class="detail-value">Pago al llegar</span>
                         </div>
+                        {% if booking.payment_status == 'pending' %}
+                        <div class="mt-3">
+                            <form method="post" action="{% url 'client_simulate_payment' booking.id %}" class="d-inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-sm">
+                                    <i class="fas fa-check me-1"></i> Simular pago exitoso
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'client_simulate_payment' booking.id %}" class="d-inline ms-2">
+                                {% csrf_token %}
+                                <input type="hidden" name="result" value="partial" />
+                                <button type="submit" class="btn btn-warning btn-sm">
+                                    <i class="fas fa-percent me-1"></i> Simular pago parcial
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
                     </div>
                     
                     <div class="detail-card">

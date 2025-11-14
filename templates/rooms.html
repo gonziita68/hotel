@@ -80,9 +80,14 @@
                     <!-- Header -->
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h1 class="h3 mb-0">Gestión de Habitaciones</h1>
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#roomModal" onclick="openRoomModal()">
-                            <i class="fas fa-plus"></i> Nueva Habitación
-                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary" id="exportCsvBtn">
+                                <i class="fas fa-file-csv"></i> Exportar CSV
+                            </button>
+                            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#roomModal" onclick="openRoomModal()">
+                                <i class="fas fa-plus"></i> Nueva Habitación
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Filtros -->
@@ -277,6 +282,10 @@ function setupEventListeners() {
     // Formulario
     document.getElementById('roomForm').addEventListener('submit', saveRoom);
     document.getElementById('confirmDeleteBtn').addEventListener('click', deleteRoom);
+    const exportBtn = document.getElementById('exportCsvBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportRoomsCsv);
+    }
 }
 
 // Cargar habitaciones desde el servidor
@@ -513,5 +522,33 @@ function getCookie(name) {
     }
     return cookieValue;
 }
+
+function exportRoomsCsv() {
+    const params = new URLSearchParams();
+    const statusFilter = document.getElementById('statusFilter').value;
+    const typeFilter = document.getElementById('typeFilter').value;
+    const floorFilter = document.getElementById('floorFilter').value;
+    const searchFilter = document.getElementById('searchFilter').value;
+
+    if (statusFilter) params.append('status', statusFilter);
+    if (typeFilter) params.append('type', typeFilter);
+    if (floorFilter) params.append('floor', floorFilter);
+    if (searchFilter) params.append('search', searchFilter);
+
+    const baseUrl = '{% url 'rooms_export_csv' %}';
+    const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+
+    const btn = document.getElementById('exportCsvBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Exportando...';
+
+    window.location.href = url;
+
+    setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-file-csv"></i> Exportar CSV';
+    }, 2000);
+}
+
 </script>
 {% endblock %}

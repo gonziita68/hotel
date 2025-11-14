@@ -37,6 +37,7 @@ class Booking(models.Model):
     # Estado y pagos
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    paid_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Monto pagado")
     
     # Información adicional
     guests_count = models.PositiveIntegerField(default=1, help_text="Número de huéspedes")
@@ -175,3 +176,12 @@ class Booking(models.Model):
             self.save()
             return True
         return False
+    
+    @property
+    def amount_due(self):
+        """Monto pendiente de pago"""
+        from decimal import Decimal
+        total = self.total_price or Decimal('0')
+        paid = self.paid_amount or Decimal('0')
+        due = total - paid
+        return due if due > Decimal('0') else Decimal('0')

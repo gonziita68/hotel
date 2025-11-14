@@ -316,3 +316,20 @@ SESSION_COOKIE_AGE = 86400  # 24 horas
 - [Documentación de Django](https://docs.djangoproject.com/)
 - [Bootstrap 5](https://getbootstrap.com/docs/5.3/)
 - [Django Ninja](https://django-ninja.rest-framework.com/)
+
+### 🧾 Pago
+- Paso adicional de pago integrado después de la confirmación
+- Estado de pago inicial: `pending`
+- Simulación de pago desde detalle y lista de reservas
+- Resultados posibles: `paid` (éxito) y `partial` (pago parcial)
+
+### Endpoints de Pago
+```
+POST /client/bookings/<id>/simulate-payment/   # Simular pago desde cliente
+```
+- Cuerpo opcional: `result=partial` para pago parcial; sin cuerpo o cualquier otro valor asume éxito
+- Requiere autenticación del cliente propietario de la reserva
+
+### Integración en la UI
+- En `templates/client/booking/detail.html`: botones "Simular pago exitoso" y "Simular pago parcial" cuando el pago está `pending`
+- En `templates/client/booking/my_bookings.html`: acciones rápidas "Simular pago" y "Pago parcial" para reservas con pago `pending`

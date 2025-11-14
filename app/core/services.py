@@ -569,4 +569,125 @@ class EmailService:
         
         Este es un email automático, por favor no respondas a este mensaje.
         © 2024 O11CE - Sistema de Gestión Hotelera
-        """ 
+        """
+    
+    @staticmethod
+    def send_payment_confirmation(booking_id: int) -> dict:
+        """Envía email de confirmación/recibo de pago de una reserva"""
+        try:
+            booking = Booking.objects.select_related('client', 'room').get(id=booking_id)
+            if not booking.client.email:
+                logger.warning(f"Cliente {booking.client.id} no tiene email configurado")
+                return {"success": False, "message": "El cliente no tiene email configurado"}
+
+            is_partial = (booking.payment_status == 'partial')
+            subject = (
+                f"Pago Parcial Registrado - {booking.room.number}" if is_partial
+                else f"Confirmación de Pago - {booking.room.number}"
+            )
+            recipient_email = booking.client.email
+            recipient_name = booking.client.first_name
+
+            html_content = EmailService._create_payment_confirmation_html(booking)
+            text_content = EmailService._create_payment_confirmation_text(booking)
+
+            email_log = EmailLog.objects.create(
+                recipient_email=recipient_email,
+                recipient_name=recipient_name,
+                subject=subject,
+                content=html_content,
+                booking=booking,
+                client=booking.client
+            )
+
+            try:
+                send_mail(
+                    subject=subject,
+                    message=text_content,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[recipient_email],
+                    html_message=html_content,
+                    fail_silently=False
+                )
+                email_log.mark_as_sent()
+                logger.info(f"Email de pago enviado a {recipient_email}")
+                return {"success": True, "message": "Email enviado exitosamente", "email_log_id": email_log.id}
+            except Exception as e:
+                error_msg = f"Error al enviar email: {str(e)}"
+                email_log.mark_as_failed(error_msg)
+                logger.error(error_msg)
+                return {"success": False, "message": error_msg, "email_log_id": email_log.id}
+        except Booking.DoesNotExist:
+            return {"success": False, "message": "Reserva no encontrada"}
+        except Exception as e:
+            logger.error(f"Error inesperado: {str(e)}")
+            return {"success": False, "message": f"Error interno: {str(e)}"}
+
+    @staticmethod
+    def _create_payment_confirmation_html(booking: Booking) -> str:
+        """Crea HTML para email de confirmación/recibo de pago"""
+        status_label = 'Pago Parcial' if booking.payment_status == 'partial' else 'Pagado'
+        return f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background-color: #198754; color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+                .content {{ padding: 30px; background-color: #f9f9f9; }}
+                .booking-details {{ background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #198754; }}
+                .footer {{ text-align: center; color: #666; font-size: 12px; padding: 20px; background-color: #f5f5f5; border-radius: 0 0 8px 8px; }}
+            </style>
+        </head>
+        <body>
+            <div class=\"container\">
+                <div class=\"header\">
+                    <h1>✔ {status_label}</h1>
+                </div>
+                <div class=\"content\">
+                    <h2>Hola {booking.client.first_name},</h2>
+                    <p>Hemos registrado tu {status_label.lower()} para la reserva #{booking.id}.</p>
+                    <div class=\"booking-details\">
+                        <h3>Detalles de la Reserva:</h3>
+                        <p><strong>Número de Reserva:</strong> #{booking.id}</p>
+                        <p><strong>Habitación:</strong> {booking.room.number} ({booking.room.get_type_display()})</p>
+                        <p><strong>Fechas:</strong> {booking.check_in_date.strftime('%d/%m/%Y')} - {booking.check_out_date.strftime('%d/%m/%Y')}</p>
+                        <p><strong>Número de Personas:</strong> {booking.guests_count}</p>
+                        <p><strong>Total:</strong> ${booking.total_price}</p>
+                        <p><strong>Pagado:</strong> ${booking.paid_amount}</p>
+                        <p><strong>Saldo Pendiente:</strong> ${booking.amount_due}</p>
+                        <p><strong>Estado de Pago:</strong> {status_label}</p>
+                    </div>
+                    <p>Gracias por tu confianza en O11CE. ¡Te esperamos!</p>
+                </div>
+                <div class=\"footer\">
+                    <p>© 2024 O11CE - Sistema de Gestión Hotelera</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+    @staticmethod
+    def _create_payment_confirmation_text(booking: Booking) -> str:
+        """Texto plano para email de pago"""
+        status_label = 'Pago Parcial' if booking.payment_status == 'partial' else 'Pagado'
+        return f"""
+        Confirmación de Pago - O11CE
+        
+        Hola {booking.client.first_name},
+        
+        Hemos registrado tu {status_label.lower()} para la reserva #{booking.id}.
+        
+        Detalles:
+         - Habitación: {booking.room.number} ({booking.room.get_type_display()})
+         - Fechas: {booking.check_in_date.strftime('%d/%m/%Y')} - {booking.check_out_date.strftime('%d/%m/%Y')}
+         - Total: ${booking.total_price}
+         - Pagado: ${booking.paid_amount}
+         - Saldo Pendiente: ${booking.amount_due}
+         - Estado de Pago: {status_label}
+         
+         ¡Gracias por tu preferencia!
+         
+         © 2024 O11CE - Sistema de Gestión Hotelera
+        """

@@ -40,8 +40,8 @@ def rooms_view(request):
     
     context = {
         'rooms': page_obj,
-        'room_types': Room.ROOM_TYPES,
-        'room_statuses': Room.ROOM_STATUS_CHOICES,
+        'room_types': Room.TYPE_CHOICES,
+        'room_statuses': Room.STATUS_CHOICES,
         'current_filters': {
             'status': status_filter,
             'type': type_filter,
@@ -208,6 +208,17 @@ def create_room_api(request):
             'error': str(e)
         }, status=400)
 
+# Endpoint unificado para GET y POST en /api/rooms/
+@login_required
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def rooms_api_collection(request):
+    if request.method == "GET":
+        return rooms_api(request)
+    else:  # POST
+        return create_room_api(request)
+
+
 @login_required
 @csrf_exempt
 @require_http_methods(["PUT"])
@@ -245,8 +256,16 @@ def update_room_api(request, room_id):
             'error': str(e)
         }, status=400)
 
+# Endpoint unificado para PUT y DELETE en /api/rooms/<id>/
 @login_required
 @csrf_exempt
+@require_http_methods(["PUT", "DELETE"])
+def room_api_detail(request, room_id):
+    if request.method == "PUT":
+        return update_room_api(request, room_id)
+    else:  # DELETE
+        return delete_room_api(request, room_id)
+
 @require_http_methods(["DELETE"])
 def delete_room_api(request, room_id):
     """API para eliminar una habitación"""
@@ -278,7 +297,7 @@ def room_status_update(request, room_id):
     
     if request.method == 'POST':
         new_status = request.POST.get('status')
-        if new_status in dict(Room.ROOM_STATUS_CHOICES):
+        if new_status in dict(Room.STATUS_CHOICES):
             room.status = new_status
             room.save()
             messages.success(request, f'Estado de habitación {room.number} actualizado a {room.get_status_display()}.')
@@ -299,7 +318,7 @@ def rooms_statistics(request):
     
     # Estadísticas por tipo
     room_types_stats = {}
-    for room_type, display_name in Room.ROOM_TYPES:
+    for room_type, display_name in Room.TYPE_CHOICES:
         room_types_stats[display_name] = Room.objects.filter(type=room_type).count()
     
     # Estadísticas por piso
@@ -324,3 +343,48 @@ def rooms_statistics(request):
         return JsonResponse(context)
     
     return render(request, 'rooms_statistics.html', context)
+
+# Nueva vista: exportación CSV de habitaciones
+@login_required
+def export_rooms_csv(request):
+    import csv
+    from django.http import HttpResponse
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="habitaciones.csv"'
+
+    writer = csv.writer(response)
+    # Encabezados
+    writer.writerow([
+        'Numero', 'Tipo', 'Capacidad', 'Piso', 'Precio', 'Estado', 'Activa', 'Descripcion'
+    ])
+
+    # Filtros opcionales (coherentes con la vista)
+    rooms_qs = Room.objects.all().order_by('number')
+    status_filter = request.GET.get('status')
+    type_filter = request.GET.get('type')
+    floor_filter = request.GET.get('floor')
+    search = request.GET.get('search')
+
+    if status_filter:
+        rooms_qs = rooms_qs.filter(status=status_filter)
+    if type_filter:
+        rooms_qs = rooms_qs.filter(type=type_filter)
+    if floor_filter:
+        rooms_qs = rooms_qs.filter(floor=floor_filter)
+    if search:
+        rooms_qs = rooms_qs.filter(Q(number__icontains=search) | Q(description__icontains=search))
+
+    for room in rooms_qs:
+        writer.writerow([
+            room.number,
+            room.get_type_display() if hasattr(room, 'get_type_display') else room.type,
+            room.capacity,
+            room.floor,
+            room.price,
+            room.get_status_display() if hasattr(room, 'get_status_display') else room.status,
+            'Sí' if room.active else 'No',
+            (room.description or '').replace('\n', ' ').strip()
+        ])
+
+    return response
