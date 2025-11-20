@@ -222,7 +222,8 @@ def create_booking_final(request):
                 client.dni = booking_data['dni']
             if not client.user and request.user.is_authenticated:
                 client.user = request.user
-            client.save()
+        client.hotel = getattr(room, 'hotel', None)
+        client.save()
         
         # Calcular precio total
         duration = (check_out - check_in).days
@@ -230,6 +231,7 @@ def create_booking_final(request):
         
         # Crear la reserva
         booking = Booking.objects.create(
+            hotel=room.hotel,
             client=client,
             room=room,
             check_in_date=check_in,
@@ -268,7 +270,15 @@ def create_booking_final(request):
 @login_required
 def booking_detail(request, booking_id):
     """Detalle de la reserva"""
-    booking = get_object_or_404(Booking, id=booking_id)
+    hotel_param = request.GET.get('hotel')
+    if hotel_param:
+        try:
+            hotel_ref = int(hotel_param)
+            booking = get_object_or_404(Booking, id=booking_id, hotel_id=hotel_ref)
+        except Exception:
+            booking = get_object_or_404(Booking, id=booking_id)
+    else:
+        booking = get_object_or_404(Booking, id=booking_id)
     
     # Verificar que el usuario puede ver esta reserva
     if not request.user.is_staff and booking.client.user != request.user:
@@ -354,6 +364,12 @@ def cancel_booking(request, booking_id):
 def bookings_api(request):
     """API: Listar reservas con filtros"""
     qs = Booking.objects.select_related('client', 'room').all().order_by('-created_at')
+    hotel_id = request.GET.get('hotel')
+    if hotel_id:
+        try:
+            qs = qs.filter(hotel_id=int(hotel_id))
+        except Exception:
+            pass
 
     status = request.GET.get('status')
     payment = request.GET.get('payment')
@@ -435,7 +451,15 @@ def create_booking_api(request):
         duration = (check_out - check_in).days
         total_price = room.price * duration
 
+        # Asegurar asociación de hotel
+        if getattr(client, 'hotel_id', None) != getattr(room, 'hotel_id', None):
+            client.hotel = getattr(room, 'hotel', None)
+            try:
+                client.save(update_fields=['hotel'])
+            except Exception:
+                client.save()
         booking = Booking.objects.create(
+            hotel=getattr(room, 'hotel', None),
             client=client,
             room=room,
             check_in_date=check_in,

@@ -187,6 +187,11 @@ class EmailService:
     @staticmethod
     def _create_booking_confirmation_html(booking: Booking) -> str:
         """Crea el contenido HTML para confirmación de reserva"""
+        hotel = booking.hotel or getattr(booking.room, 'hotel', None)
+        hotel_name = hotel.name if hotel else 'O11CE Hotel'
+        hotel_email = getattr(hotel, 'email_contact', '') if hotel else ''
+        hotel_phone = getattr(hotel, 'phone', '') if hotel else ''
+        hotel_address = getattr(hotel, 'address', '') if hotel else ''
         return f"""
         <html>
         <head>
@@ -253,14 +258,15 @@ class EmailService:
                         <p><strong>Estado:</strong> <span class="highlight">{booking.get_status_display()}</span></p>
                     </div>
                     
-                    <p>¡Gracias por elegir O11CE! Esperamos tu llegada.</p>
+                    <p>¡Gracias por elegir {hotel_name}! Esperamos tu llegada.</p>
                     
                     <p>Si tienes alguna pregunta, no dudes en contactarnos.</p>
                 </div>
                 <div class="footer">
+                    <p>Contacto: {hotel_email} {hotel_phone} • {hotel_address}</p>
                     <p>Este es un email automático, por favor no respondas a este mensaje.</p>
-                    <p>© 2024 O11CE - Sistema de Gestión Hotelera</p>
-                </div>
+                    <p>© 2024 {hotel_name}</p>
+        </div>
             </div>
         </body>
         </html>

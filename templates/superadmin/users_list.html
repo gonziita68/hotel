@@ -1,0 +1,37 @@
+{% extends "superadmin/base_superadmin.html" %}
+{% block title %}Superadmin • Usuarios{% endblock %}
+{% block content %}
+<section class="hero-section">
+  <div class="container hero-content">
+    <h1 class="display-6">Usuarios</h1>
+    <p class="text-light">Asignación rápida de roles</p>
+  </div>
+</section>
+<div class="container my-4">
+  <div class="table-responsive">
+    <table class="table align-middle">
+      <thead><tr><th>Usuario</th><th>Nombre</th><th>Roles</th><th>Acciones</th></tr></thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td class="fw-semibold">{{ u.username }}</td>
+          <td>{{ u.get_full_name }}</td>
+          <td>{% for g in u.groups.all %}<span class="badge bg-secondary me-1">{{ g.name }}</span>{% endfor %}</td>
+          <td>
+            <form method="post" class="d-flex gap-2">
+              {% csrf_token %}
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <select name="role" class="form-select form-select-sm" style="max-width:180px">
+                <option value="hotel_admin">hotel_admin</option>
+                <option value="staff">staff</option>
+              </select>
+              <button class="btn btn-primary btn-sm">Asignar</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

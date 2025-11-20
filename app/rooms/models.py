@@ -1,4 +1,5 @@
 from django.db import models
+from app.administration.models import Hotel
 
 class Room(models.Model):
     """
@@ -20,8 +21,10 @@ class Room(models.Model):
         ('reserved', 'Reservada'),
     ]
     
+    # Hotel
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, help_text="Hotel al que pertenece")
     # Campos básicos
-    number = models.CharField(max_length=10, unique=True, help_text="Número de habitación")
+    number = models.CharField(max_length=10, help_text="Número de habitación")
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='individual')
     capacity = models.PositiveIntegerField(default=1, help_text="Número máximo de huéspedes")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
@@ -40,6 +43,9 @@ class Room(models.Model):
         verbose_name = "Habitación"
         verbose_name_plural = "Habitaciones"
         ordering = ['number']
+        constraints = [
+            models.UniqueConstraint(fields=['hotel', 'number'], name='uniq_room_hotel_number')
+        ]
     
     def __str__(self):
         return f"Habitación {self.number} - {self.get_type_display()}"

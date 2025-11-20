@@ -1,0 +1,90 @@
+{% extends "superadmin/base_superadmin.html" %}
+{% block title %}Superadmin • {{ hotel.name }}{% endblock %}
+{% block content %}
+<section class="hero-section">
+  <div class="container hero-content">
+    <h1 class="display-6">{{ hotel.name }}</h1>
+    <p class="text-light">Gestión del hotel</p>
+  </div>
+</section>
+<div class="container my-4">
+  <div class="client-card">
+    <div class="room-content">
+      <div class="room-header">
+        <h3 class="room-title">Detalles</h3>
+        <span class="status-badge {% if hotel.is_blocked %}status-maintenance{% else %}status-available{% endif %}">{% if hotel.is_blocked %}Bloqueado{% else %}Activo{% endif %}</span>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-6"><div class="price-tag"><span class="price-period">Slug</span> <span class="price-amount">{{ hotel.slug }}</span></div></div>
+        <div class="col-md-6"><div class="price-tag"><span class="price-period">Contacto</span> <span class="price-amount">{{ hotel.email_contact }} • {{ hotel.phone }}</span></div></div>
+        <div class="col-12"><p class="room-description">{{ hotel.address }}</p></div>
+      </div>
+      <div class="room-actions mt-2">
+        {% if hotel.is_blocked %}
+          <form method="post" action="{% url 'superadmin_unblock_hotel' hotel.id %}" class="flex-grow-1">{% csrf_token %}<button class="btn btn-success w-100">Desbloquear</button></form>
+        {% else %}
+          <form method="post" action="{% url 'superadmin_block_hotel' hotel.id %}" class="flex-grow-1">{% csrf_token %}<button class="btn btn-danger w-100">Bloquear</button></form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+  <div class="page-section">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <div class="client-card kpi-card">
+        <div class="text-gradient fw-semibold">Ocupación hoy <small class="text-muted" id="range-hotel"></small></div>
+        <div id="hkpi-occupancy" class="kpi-value">…</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="client-card kpi-card">
+        <div class="text-gradient fw-semibold">Check‑in hoy</div>
+        <div id="hkpi-checkin" class="kpi-value">…</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="client-card kpi-card">
+        <div class="text-gradient fw-semibold">Reservas en periodo</div>
+        <div id="hkpi-period" class="kpi-value">…</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-section">
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="client-card chart-card">
+        <h6 class="mb-3">Reservas diarias</h6>
+        <div id="hotel-error" class="text-danger mb-2" style="display:none"></div>
+        <canvas id="hchart-daily"></canvas>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="client-card chart-card">
+        <h6 class="mb-3">Distribución de estados</h6>
+        <canvas id="hchart-status"></canvas>
+      </div>
+      
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function qp(k){const u=new URL(window.location.href);return u.searchParams.get(k)}
+async function loadHotel(){
+  const d=qp('desde')||'';const h=qp('hasta')||'';const url='/superadmin/api/dashboard/hotel/{{ hotel.id }}'+(d||h?`?desde=${encodeURIComponent(d)}&hasta=${encodeURIComponent(h)}`:'');
+  const r=await fetch(url);if(!r.ok)return;const data=await r.json();
+  document.getElementById('range-hotel').textContent=(d&&h)?`(${d}–${h})`:'';
+  const k=data.kpis||{};document.getElementById('hkpi-checkin').textContent=k.bookings_checkin_today_total||0;
+  const occ=k.occupancy_today;document.getElementById('hkpi-occupancy').textContent=(occ==null?'–':Math.round((occ*100))+'%');
+  document.getElementById('hkpi-period').textContent=k.reservations_period_count||0;
+  const s=(data.series||{}).daily_bookings||[];
+  const labels=s.map(x=>x.date);const p=s.map(x=>x.pending);const c=s.map(x=>x.confirmed);const cc=s.map(x=>x.cancelled);
+  const ctx=document.getElementById('hchart-daily');new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:'Pendientes',data:p,borderColor:'#f59e0b'},{label:'Confirmadas',data:c,borderColor:'#10b981'},{label:'Canceladas',data:cc,borderColor:'#ef4444'}]}});
+  const dist=(data.distributions||{}).status||{pending:0,confirmed:0,cancelled:0};
+  const ctx2=document.getElementById('hchart-status');new Chart(ctx2,{type:'doughnut',data:{labels:['Pendiente','Confirmada','Cancelada'],datasets:[{data:[dist.pending,dist.confirmed,dist.cancelled],backgroundColor:['#f59e0b','#10b981','#ef4444']} ]}});
+}
+loadHotel()
+</script>
+{% endblock %}

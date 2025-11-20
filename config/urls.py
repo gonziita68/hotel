@@ -40,7 +40,23 @@ from app.core.views import (
     client_booking_view, client_my_bookings_view, client_booking_detail_view,
     client_booking_confirmation_view,
     client_cancel_booking_view, client_profile_view, client_login_view,
-    client_register_view, client_logout_view, get_room_availability
+    client_register_view, client_logout_view, get_room_availability,
+    hotel_reserve_view, hotel_confirm_reservation_view,
+    panel_change_booking_status,
+    superadmin_dashboard_view,
+    superadmin_hotels_list_view,
+    superadmin_hotel_detail_view,
+    superadmin_block_hotel,
+    superadmin_unblock_hotel,
+    superadmin_audit_actions_view,
+    superadmin_audit_emails_view,
+    superadmin_users_list_view,
+    superadmin_export_bookings_csv,
+    superadmin_api_dashboard_global,
+    superadmin_api_dashboard_hotel,
+    superadmin_api_ia_analisis,
+    superadmin_api_ia_chat,
+    superadmin_api_hotels
 )
 from app.core.views import client_simulate_payment_view, client_booking_pdf_view
 from app.rooms.views import rooms_view, rooms_api_collection, room_api_detail, export_rooms_csv
@@ -418,6 +434,11 @@ urlpatterns = [
     path("portal/login/", client_login_view, name="client_login"),
     path("portal/register/", client_register_view, name="client_register"),
     path("portal/logout/", client_logout_view, name="client_logout"),
+    # =========================================================================
+    # RUTAS PÚBLICAS POR HOTEL (SaaS MVP)
+    # =========================================================================
+    path("h/<slug:hotel_slug>/reservar/", hotel_reserve_view, name="hotel_reserve"),
+    path("h/<slug:hotel_slug>/confirmar-reserva/", hotel_confirm_reservation_view, name="hotel_confirm_reservation"),
     
     # ============================================================================
     # RUTAS DEL PROCESO DE RESERVA MULTI-PASO
@@ -443,4 +464,29 @@ urlpatterns = [
 
     # Admin booking detail (backend)
     path('admin/bookings/<int:booking_id>/', booking_detail, name='booking_detail'),
+
+    # Panel (alias de vistas existentes)
+    path("panel/login/", login_view, name="panel_login"),
+    path("panel/", dashboard_view, name="panel_dashboard"),
+    path("panel/reservas/", bookings_view, name="panel_bookings"),
+    path("panel/reservas/<int:booking_id>/", booking_detail, name="panel_booking_detail"),
+    path("panel/reservas/<int:booking_id>/cambiar-estado/", panel_change_booking_status, name="panel_change_booking_status"),
+    path("panel/habitaciones/", rooms_view, name="panel_rooms"),
+    path("panel/clientes/", clients_view, name="panel_clients"),
+
+    # Superadmin
+    path("superadmin/", superadmin_dashboard_view, name="superadmin_dashboard"),
+    path("superadmin/hoteles/", superadmin_hotels_list_view, name="superadmin_hotels"),
+    path("superadmin/hoteles/<int:hotel_id>/", superadmin_hotel_detail_view, name="superadmin_hotel_detail"),
+    path("superadmin/hoteles/<int:hotel_id>/bloquear/", superadmin_block_hotel, name="superadmin_block_hotel"),
+    path("superadmin/hoteles/<int:hotel_id>/desbloquear/", superadmin_unblock_hotel, name="superadmin_unblock_hotel"),
+    path("superadmin/auditoria/acciones/", superadmin_audit_actions_view, name="superadmin_audit_actions"),
+    path("superadmin/auditoria/emails/", superadmin_audit_emails_view, name="superadmin_audit_emails"),
+    path("superadmin/usuarios/", superadmin_users_list_view, name="superadmin_users"),
+    path("superadmin/reportes/reservas.csv", superadmin_export_bookings_csv, name="superadmin_export_bookings_csv"),
+    path("superadmin/api/dashboard/global", superadmin_api_dashboard_global, name="superadmin_api_dashboard_global"),
+    path("superadmin/api/dashboard/hotel/<int:hotel_id>", superadmin_api_dashboard_hotel, name="superadmin_api_dashboard_hotel"),
+    path("superadmin/api/ia/analisis/", superadmin_api_ia_analisis, name="superadmin_api_ia_analisis"),
+    path("superadmin/api/ia/chat/", superadmin_api_ia_chat, name="superadmin_api_ia_chat"),
+    path("superadmin/api/hotels", superadmin_api_hotels, name="superadmin_api_hotels"),
 ]

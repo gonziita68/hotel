@@ -2,11 +2,19 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.utils import timezone
+from django.db.models.functions import TruncDate
+from django.db.models import Count, Q
+import json
+from django.core.cache import cache
+from app.core.services_ia import call_n8n_ia_analyst, IAServiceError, IAServiceNotConfigured
+from app.superadmin.services import get_dashboard_data
 from django.contrib.auth.forms import UserCreationForm
 from app.clients.forms import ClientRegistrationForm
 from django.contrib.auth.models import User
 from django.db.models import Count, Sum, Q
 from django.http import JsonResponse, HttpResponse
+from django.http import HttpResponseForbidden
 from datetime import datetime, timedelta
 import locale
 from .utils import log_user_action
@@ -27,6 +35,7 @@ except locale.Error:
 from app.rooms.models import Room
 from app.bookings.models import Booking
 from app.clients.models import Client
+from app.administration.models import Hotel
 try:
     from app.cleaning.models import CleaningTask
 except ImportError:
@@ -285,7 +294,15 @@ def rooms_view(request):
     log_user_action(request.user, 'gestionar_habitaciones', 'Usuario accedió a gestión de habitaciones', request)
     
     if Room:
-        rooms = Room.objects.all()
+        hotel_slug = request.GET.get('hotel')
+        if hotel_slug:
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+                rooms = Room.objects.filter(hotel=hotel)
+            except Hotel.DoesNotExist:
+                rooms = Room.objects.none()
+        else:
+            rooms = Room.objects.all()
     else:
         rooms = []
     return render(request, 'rooms/list.html', {'rooms': rooms})
@@ -296,7 +313,15 @@ def bookings_view(request):
     log_user_action(request.user, 'nueva_reserva', 'Usuario accedió a gestión de reservas', request)
     
     if Booking:
-        bookings = Booking.objects.select_related('client', 'room').all()
+        hotel_slug = request.GET.get('hotel')
+        qs = Booking.objects.select_related('client', 'room', 'hotel')
+        if hotel_slug:
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+                qs = qs.filter(hotel=hotel)
+            except Hotel.DoesNotExist:
+                qs = qs.none()
+        bookings = qs.all()
     else:
         bookings = []
     return render(request, 'bookings/list.html', {'bookings': bookings})
@@ -305,7 +330,15 @@ def bookings_view(request):
 def clients_view(request):
     """Vista de clientes"""
     if Client:
-        clients = Client.objects.all()
+        hotel_slug = request.GET.get('hotel')
+        if hotel_slug:
+            try:
+                hotel = Hotel.objects.get(slug=hotel_slug)
+                clients = Client.objects.filter(hotel=hotel)
+            except Hotel.DoesNotExist:
+                clients = Client.objects.none()
+        else:
+            clients = Client.objects.all()
     else:
         clients = []
     return render(request, 'clients/list.html', {'clients': clients})
@@ -367,11 +400,123 @@ def client_index_view(request):
     
     return render(request, 'client/index.html', context)
 
+def hotel_reserve_view(request, hotel_slug):
+    try:
+        hotel = Hotel.objects.get(slug=hotel_slug)
+    except Hotel.DoesNotExist:
+        return HttpResponse("Hotel no encontrado", status=404)
+    if request.method == 'POST':
+        check_in = request.POST.get('check_in')
+        check_out = request.POST.get('check_out')
+        guests = request.POST.get('guests')
+        try:
+            from datetime import datetime
+            check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
+            check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
+        except Exception:
+            return HttpResponse("Fechas inválidas", status=400)
+        rooms_qs = Room.objects.filter(hotel=hotel, active=True, status='available')
+        try:
+            g = int(guests or '1')
+            rooms_qs = rooms_qs.filter(capacity__gte=g)
+        except Exception:
+            pass
+        overlapping = Booking.objects.filter(
+            room__in=rooms_qs,
+            status__in=['confirmed', 'pending'],
+            check_in_date__lt=check_out_date,
+            check_out_date__gt=check_in_date
+        ).values_list('room_id', flat=True)
+        available_rooms = rooms_qs.exclude(id__in=list(overlapping))[:30]
+        return render(request, 'hotel/reserve_results.html', {
+            'hotel': hotel,
+            'rooms': available_rooms,
+            'check_in': check_in,
+            'check_out': check_out,
+            'guests': guests,
+        })
+    return render(request, 'hotel/reserve_search.html', {'hotel': hotel})
+
+def hotel_confirm_reservation_view(request, hotel_slug):
+    if request.method != 'POST':
+        return HttpResponse("Método no permitido", status=405)
+    try:
+        hotel = Hotel.objects.get(slug=hotel_slug)
+    except Hotel.DoesNotExist:
+        return HttpResponse("Hotel no encontrado", status=404)
+    room_id = request.POST.get('room_id')
+    full_name = request.POST.get('full_name')
+    email = request.POST.get('email')
+    phone = request.POST.get('phone')
+    document = request.POST.get('document')
+    check_in = request.POST.get('check_in')
+    check_out = request.POST.get('check_out')
+    guests = request.POST.get('guests')
+    if not all([room_id, full_name, email, check_in, check_out, guests]):
+        return HttpResponse("Faltan datos", status=400)
+    try:
+        from datetime import datetime
+        check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
+        check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
+        room = Room.objects.get(id=room_id, hotel=hotel, active=True)
+        parts = full_name.strip().split(' ', 1)
+        first_name = parts[0]
+        last_name = parts[1] if len(parts) > 1 else ''
+        client, _ = Client.objects.get_or_create(email=email, defaults={
+            'first_name': first_name,
+            'last_name': last_name,
+            'phone': phone or '',
+            'dni': document or ''
+        })
+        client.hotel = hotel
+        client.save()
+        nights = (check_out_date - check_in_date).days
+        total_price = room.price * nights
+        booking = Booking.objects.create(
+            hotel=hotel,
+            client=client,
+            room=room,
+            check_in_date=check_in_date,
+            check_out_date=check_out_date,
+            guests_count=int(guests),
+            total_price=total_price,
+            status='pending'
+        )
+        try:
+            from .services import EmailService
+            EmailService.send_booking_confirmation(booking.id)
+        except Exception:
+            pass
+        return HttpResponse(f"Reserva creada #{booking.id}")
+    except Exception:
+        return HttpResponse("Error al crear reserva", status=400)
+
+@login_required
+def panel_change_booking_status(request, booking_id):
+    if request.method != 'POST':
+        return redirect('panel_booking_detail', booking_id=booking_id)
+    new_status = request.POST.get('status')
+    try:
+        hotel_activo = get_hotel_activo(request)
+        b = Booking.objects.get(id=booking_id, hotel=hotel_activo)
+        if new_status in dict(Booking.STATUS_CHOICES):
+            b.status = new_status
+            b.save(update_fields=['status'])
+            messages.success(request, 'Estado actualizado')
+        else:
+            messages.error(request, 'Estado inválido')
+    except Booking.DoesNotExist:
+        messages.error(request, 'Reserva no encontrada')
+    return redirect('panel_booking_detail', booking_id=booking_id)
+
 def client_rooms_view(request):
     """Vista de habitaciones disponibles para clientes"""
     if Room:
+        # Obtener hotel activo si se proporcionó
+        hotel_activo = get_hotel_activo(request)
         # Obtener todas las habitaciones activas por defecto
-        rooms = Room.objects.filter(active=True).order_by('number')
+        base = Room.objects.filter(active=True)
+        rooms = base.filter(hotel=hotel_activo) if hotel_activo else base
         
         # Aplicar filtros solo si se proporcionan
         room_type = request.GET.get('type', '').strip()
@@ -572,6 +717,7 @@ def client_booking_view(request, room_id=None):
                 
                 # Crear la reserva
                 booking = Booking.objects.create(
+                    hotel=room.hotel,
                     client=client,
                     room=room,
                     check_in_date=check_in_date,
@@ -1070,3 +1216,458 @@ def client_booking_pdf_view(request, booking_id):
     except Exception:
         messages.error(request, 'No se pudo generar el PDF. Contacta soporte.')
         return redirect('client_booking_detail', booking_id=booking_id)
+def is_superadmin(user):
+    from django.conf import settings
+    return (
+        getattr(user, 'is_superuser', False)
+        or user.groups.filter(name='superadmin').exists()
+        or (getattr(settings, 'DEBUG', False) and getattr(user, 'is_authenticated', False))
+    )
+
+@login_required
+def superadmin_dashboard_view(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from django.utils import timezone
+    today = timezone.now().date()
+    hotels = Hotel.objects.all().order_by('name')
+    total_rooms = 0
+    occupied_rooms = 0
+    total_reservas_hoy = 0
+    pendientes_hoy = 0
+    confirmadas_hoy = 0
+    from app.rooms.models import Room
+    from app.bookings.models import Booking
+    for h in hotels:
+        total_rooms += Room.objects.filter(hotel=h).count()
+        ocupadas = Booking.objects.filter(hotel=h, status='confirmed', check_in_date__lte=today, check_out_date__gte=today).values('room').distinct().count()
+        occupied_rooms += ocupadas
+        reservas_hoy = Booking.objects.filter(hotel=h, check_in_date__lte=today, check_out_date__gte=today).count()
+        total_reservas_hoy += reservas_hoy
+        pendientes_hoy += Booking.objects.filter(hotel=h, status='pending', check_in_date__lte=today, check_out_date__gte=today).count()
+        confirmadas_hoy += Booking.objects.filter(hotel=h, status='confirmed', check_in_date__lte=today, check_out_date__gte=today).count()
+    ocupacion = 0
+    if total_rooms > 0:
+        from decimal import Decimal
+        ocupacion = round((Decimal(occupied_rooms) / Decimal(total_rooms)) * Decimal('100'), 2)
+    context = {
+        'hotels': hotels,
+        'total_rooms': total_rooms,
+        'occupied_rooms': occupied_rooms,
+        'total_reservas_hoy': total_reservas_hoy,
+        'pendientes_hoy': pendientes_hoy,
+        'confirmadas_hoy': confirmadas_hoy,
+        'ocupacion_percent': ocupacion,
+    }
+    return render(request, 'superadmin/dashboard.html', context)
+def _parse_date_params(request):
+    try:
+        to_str = request.GET.get('hasta')
+        from_str = request.GET.get('desde')
+        days = int(request.GET.get('days') or '30')
+        if days > 90:
+            return None, None, None
+        today = timezone.now().date()
+        to_date = today if not to_str else timezone.datetime.strptime(to_str, '%Y-%m-%d').date()
+        from_date = (to_date - timezone.timedelta(days=30)) if not from_str else timezone.datetime.strptime(from_str, '%Y-%m-%d').date()
+        return from_date, to_date, days
+    except Exception:
+        return None, None, None
+def _kpis_for_hotel(hotel):
+    today = timezone.now().date()
+    from app.rooms.models import Room
+    total_rooms = Room.objects.filter(hotel=hotel).count()
+    occupied_rooms = Booking.objects.filter(hotel=hotel, status='confirmed', check_in_date__lte=today, check_out_date__gt=today).values('room_id').distinct().count()
+    occupancy_today = None if total_rooms == 0 else round(occupied_rooms / total_rooms, 4)
+    bookings_checkin_today_total = Booking.objects.filter(hotel=hotel, check_in_date=today).count()
+    return occupancy_today, bookings_checkin_today_total
+def _kpis_for_global():
+    today = timezone.now().date()
+    from app.rooms.models import Room
+    total_rooms = Room.objects.count()
+    occupied_rooms = Booking.objects.filter(status='confirmed', check_in_date__lte=today, check_out_date__gt=today).values('room_id').distinct().count()
+    occupancy_today = None if total_rooms == 0 else round(occupied_rooms / total_rooms, 4)
+    bookings_checkin_today_total = Booking.objects.filter(check_in_date=today).count()
+    return occupancy_today, bookings_checkin_today_total
+def _series_daily_bookings(from_date, to_date, hotel=None):
+    base = Booking.objects.filter(check_in_date__gte=from_date, check_in_date__lte=to_date)
+    if hotel:
+        base = base.filter(hotel=hotel)
+    arr = []
+    cur = from_date
+    while cur <= to_date:
+        day = base.filter(check_in_date=cur)
+        arr.append({
+            'date': cur.strftime('%Y-%m-%d'),
+            'pending': day.filter(status='pending').count(),
+            'confirmed': day.filter(status='confirmed').count(),
+            'cancelled': day.filter(status='cancelled').count(),
+        })
+        cur += timezone.timedelta(days=1)
+    return arr
+def _distribution_status(from_date, to_date, hotel=None):
+    qs = Booking.objects.filter(check_in_date__gte=from_date, check_in_date__lte=to_date)
+    if hotel:
+        qs = qs.filter(hotel=hotel)
+    agg = qs.aggregate(
+        pending=Count('id', filter=Q(status='pending')),
+        confirmed=Count('id', filter=Q(status='confirmed')),
+        cancelled=Count('id', filter=Q(status='cancelled')),
+    )
+    return {'pending': agg.get('pending') or 0, 'confirmed': agg.get('confirmed') or 0, 'cancelled': agg.get('cancelled') or 0}
+@login_required
+def superadmin_api_dashboard_hotel(request, hotel_id):
+    if not is_superadmin(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+    from_date, to_date, days = _parse_date_params(request)
+    if from_date is None:
+        return JsonResponse({'error': 'invalid_params'}, status=400)
+    try:
+        hotel = Hotel.objects.get(id=hotel_id)
+    except Hotel.DoesNotExist:
+        return JsonResponse({'error': 'hotel_not_found'}, status=404)
+    occupancy_today, bookings_today = _kpis_for_hotel(hotel)
+    reservations_period_count = Booking.objects.filter(hotel=hotel, check_in_date__gte=from_date, check_in_date__lte=to_date).count()
+    series = _series_daily_bookings(from_date, to_date, hotel)
+    dist = _distribution_status(from_date, to_date, hotel)
+    resp = {
+        'meta': {
+            'version': 1,
+            'scope': 'hotel',
+            'hotel_id': hotel.id,
+            'hotel_name': hotel.name,
+            'date_range': {'from': from_date.strftime('%Y-%m-%d'), 'to': to_date.strftime('%Y-%m-%d')}
+        },
+        'kpis': {
+            'occupancy_today': occupancy_today,
+            'bookings_checkin_today_total': bookings_today,
+            'reservations_period_count': reservations_period_count
+        },
+        'series': {
+            'daily_bookings': series
+        },
+        'distributions': {
+            'status': dist
+        }
+    }
+    return JsonResponse(resp)
+@login_required
+def superadmin_api_dashboard_global(request):
+    if not is_superadmin(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+    from_date, to_date, days = _parse_date_params(request)
+    if from_date is None:
+        return JsonResponse({'error': 'invalid_params'}, status=400)
+    occupancy_today, bookings_today = _kpis_for_global()
+    reservations_period_count = Booking.objects.filter(check_in_date__gte=from_date, check_in_date__lte=to_date).count()
+    series = _series_daily_bookings(from_date, to_date, None)
+    dist = _distribution_status(from_date, to_date, None)
+    resp = {
+        'meta': {
+            'version': 1,
+            'scope': 'global',
+            'date_range': {'from': from_date.strftime('%Y-%m-%d'), 'to': to_date.strftime('%Y-%m-%d')}
+        },
+        'kpis': {
+            'occupancy_today': occupancy_today,
+            'bookings_checkin_today_total': bookings_today,
+            'reservations_period_count': reservations_period_count
+        },
+        'series': {
+            'daily_bookings': series
+        },
+        'distributions': {
+            'status': dist
+        }
+    }
+    return JsonResponse(resp)
+@login_required
+def superadmin_api_ia_analisis(request):
+    if not is_superadmin(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'method_not_allowed'}, status=405)
+    key = f"ia_analisis_superadmin:{request.user.id}"
+    if cache.get(key):
+        return JsonResponse({'error': 'too_many_requests'}, status=429)
+    cache.set(key, True, 15)
+    try:
+        body = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'error': 'invalid_json'}, status=400)
+    scope = body.get('scope')
+    hotel_id = body.get('hotel_id')
+    desde_str = body.get('desde')
+    hasta_str = body.get('hasta')
+    question = body.get('question') or 'Analizá la situación actual y decime qué revisar primero.'
+    if scope not in ['global', 'hotel']:
+        return JsonResponse({'error': 'invalid_scope'}, status=400)
+    try:
+        desde = timezone.datetime.strptime(desde_str, '%Y-%m-%d').date()
+        hasta = timezone.datetime.strptime(hasta_str, '%Y-%m-%d').date()
+    except Exception:
+        return JsonResponse({'error': 'invalid_dates'}, status=400)
+    if desde > hasta:
+        return JsonResponse({'error': 'invalid_dates'}, status=400)
+    hotel = None
+    hotel_name = None
+    if scope == 'hotel':
+        if not hotel_id:
+            return JsonResponse({'error': 'hotel_id_required'}, status=400)
+        try:
+            hotel = Hotel.objects.get(id=hotel_id)
+            hotel_name = hotel.name
+        except Hotel.DoesNotExist:
+            return JsonResponse({'error': 'hotel_not_found'}, status=404)
+    try:
+        dashboard_data = get_dashboard_data(scope=scope, hotel=hotel, desde=desde, hasta=hasta)
+    except Exception:
+        return JsonResponse({'error': 'dashboard_data_error'}, status=500)
+    kpis = dashboard_data.get('kpis', {})
+    series = dashboard_data.get('series', {})
+    distributions = dashboard_data.get('distributions', {})
+    payload = {
+        'meta': {
+            'version': 1,
+            'scope': scope,
+            'hotel_name': hotel_name,
+            'date_range': {'from': desde_str, 'to': hasta_str}
+        },
+        'kpis': {
+            'occupancy_today': kpis.get('occupancy_today'),
+            'bookings_checkin_today_total': kpis.get('bookings_checkin_today_total', 0),
+            'reservations_period_count': kpis.get('reservations_period_count', 0)
+        },
+        'series': {
+            'daily_bookings': series.get('daily_bookings', [])
+        },
+        'distributions': {
+            'status': distributions.get('status', {'pending': 0, 'confirmed': 0, 'cancelled': 0})
+        },
+        'question': question
+    }
+    try:
+        ia_result = call_n8n_ia_analyst(payload)
+        return JsonResponse(ia_result, status=200)
+    except IAServiceNotConfigured:
+        return JsonResponse({'error': 'ia_not_configured'}, status=503)
+    except IAServiceError as e:
+        return JsonResponse({'error': 'ia_error', 'detail': str(e)}, status=503)
+
+@login_required
+def superadmin_api_ia_chat(request):
+    if not is_superadmin(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'method_not_allowed'}, status=405)
+    key = f"ia_chat_superadmin:{request.user.id}"
+    if cache.get(key):
+        return JsonResponse({'error': 'too_many_requests'}, status=429)
+    cache.set(key, True, 15)
+    try:
+        body = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'error': 'invalid_json'}, status=400)
+    scope = body.get('scope')
+    hotel_id = body.get('hotel_id')
+    desde_str = body.get('desde')
+    hasta_str = body.get('hasta')
+    question = (body.get('question') or '').strip()
+    if not question:
+        question = 'Analiza el contexto y sugiere acciones prioritarias.'
+    if scope not in ['global', 'hotel']:
+        return JsonResponse({'error': 'invalid_scope'}, status=400)
+    try:
+        desde = timezone.datetime.strptime(desde_str, '%Y-%m-%d').date()
+        hasta = timezone.datetime.strptime(hasta_str, '%Y-%m-%d').date()
+    except Exception:
+        return JsonResponse({'error': 'invalid_dates'}, status=400)
+    if desde > hasta:
+        return JsonResponse({'error': 'invalid_dates'}, status=400)
+    hotel = None
+    hotel_name = None
+    if scope == 'hotel':
+        if not hotel_id:
+            return JsonResponse({'error': 'hotel_id_required'}, status=400)
+        try:
+            hotel = Hotel.objects.get(id=hotel_id)
+            hotel_name = hotel.name
+        except Hotel.DoesNotExist:
+            return JsonResponse({'error': 'hotel_not_found'}, status=404)
+    try:
+        dashboard_data = get_dashboard_data(scope=scope, hotel=hotel, desde=desde, hasta=hasta)
+    except Exception:
+        return JsonResponse({'error': 'dashboard_data_error'}, status=500)
+    kpis = dashboard_data.get('kpis', {})
+    series = dashboard_data.get('series', {})
+    distributions = dashboard_data.get('distributions', {})
+    payload = {
+        'meta': {
+            'version': 1,
+            'scope': scope,
+            'hotel_name': hotel_name,
+            'date_range': {'from': desde_str, 'to': hasta_str}
+        },
+        'kpis': {
+            'occupancy_today': kpis.get('occupancy_today'),
+            'bookings_checkin_today_total': kpis.get('bookings_checkin_today_total', 0),
+            'reservations_period_count': kpis.get('reservations_period_count', 0)
+        },
+        'series': {
+            'daily_bookings': series.get('daily_bookings', [])
+        },
+        'distributions': {
+            'status': distributions.get('status', {'pending': 0, 'confirmed': 0, 'cancelled': 0})
+        },
+        'question': question
+    }
+    try:
+        ia_result = call_n8n_ia_analyst(payload)
+        return JsonResponse(ia_result, status=200)
+    except IAServiceNotConfigured:
+        return JsonResponse({'error': 'ia_not_configured'}, status=503)
+    except IAServiceError:
+        return JsonResponse({'error': 'IA no disponible en este momento'}, status=503)
+
+@login_required
+def superadmin_api_hotels(request):
+    if not is_superadmin(request.user):
+        return JsonResponse({'error': 'forbidden'}, status=403)
+    items = list(Hotel.objects.all().order_by('name').values('id', 'name', 'slug', 'is_blocked'))
+    return JsonResponse({'hotels': items})
+
+@login_required
+def superadmin_hotels_list_view(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    hotels = Hotel.objects.all().order_by('name')
+    return render(request, 'superadmin/hotels_list.html', {'hotels': hotels})
+
+@login_required
+def superadmin_hotel_detail_view(request, hotel_id):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from django.shortcuts import get_object_or_404
+    hotel = get_object_or_404(Hotel, id=hotel_id)
+    return render(request, 'superadmin/hotel_detail.html', {'hotel': hotel})
+
+@login_required
+def superadmin_block_hotel(request, hotel_id):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from django.shortcuts import get_object_or_404
+    hotel = get_object_or_404(Hotel, id=hotel_id)
+    if request.method == 'POST':
+        hotel.is_blocked = True
+        hotel.save(update_fields=['is_blocked'])
+        messages.success(request, 'Hotel bloqueado')
+    return redirect('superadmin_hotel_detail', hotel_id=hotel.id)
+
+@login_required
+def superadmin_unblock_hotel(request, hotel_id):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from django.shortcuts import get_object_or_404
+    hotel = get_object_or_404(Hotel, id=hotel_id)
+    if request.method == 'POST':
+        hotel.is_blocked = False
+        hotel.save(update_fields=['is_blocked'])
+        messages.success(request, 'Hotel desbloqueado')
+    return redirect('superadmin_hotel_detail', hotel_id=hotel.id)
+
+@login_required
+def superadmin_audit_actions_view(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from app.core.models import ActionLog
+    hotel_id = request.GET.get('hotel')
+    qs = ActionLog.objects.select_related('user').order_by('-created_at')
+    if hotel_id:
+        try:
+            h = Hotel.objects.get(id=hotel_id)
+            qs = qs.filter(description__icontains=h.name)
+        except Hotel.DoesNotExist:
+            qs = qs.none()
+    return render(request, 'superadmin/audit_actions.html', {'logs': qs})
+
+@login_required
+def superadmin_audit_emails_view(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from app.core.models import EmailLog
+    hotel_id = request.GET.get('hotel')
+    qs = EmailLog.objects.order_by('-created_at')
+    if hotel_id:
+        try:
+            h = Hotel.objects.get(id=hotel_id)
+            qs = qs.filter(content__icontains=h.name)
+        except Hotel.DoesNotExist:
+            qs = qs.none()
+    return render(request, 'superadmin/audit_emails.html', {'emails': qs})
+
+@login_required
+def superadmin_users_list_view(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from django.contrib.auth.models import User, Group
+    users = User.objects.all().order_by('username')
+    if request.method == 'POST':
+        user_id = request.POST.get('user_id')
+        role = request.POST.get('role')
+        try:
+            u = User.objects.get(id=user_id)
+            g, _ = Group.objects.get_or_create(name=role)
+            u.groups.add(g)
+            messages.success(request, 'Rol asignado')
+        except Exception:
+            messages.error(request, 'No se pudo asignar el rol')
+        return redirect('superadmin_users')
+    return render(request, 'superadmin/users_list.html', {'users': users})
+
+@login_required
+def superadmin_export_bookings_csv(request):
+    if not is_superadmin(request.user):
+        return HttpResponseForbidden()
+    from app.bookings.models import Booking
+    import csv
+    from io import StringIO
+    hotel_id = request.GET.get('hotel')
+    desde = request.GET.get('desde')
+    hasta = request.GET.get('hasta')
+    qs = Booking.objects.select_related('client', 'room', 'hotel')
+    if hotel_id:
+        try:
+            h = Hotel.objects.get(id=hotel_id)
+            qs = qs.filter(hotel=h)
+        except Hotel.DoesNotExist:
+            qs = qs.none()
+    if desde and hasta:
+        try:
+            from datetime import datetime
+            d1 = datetime.strptime(desde, '%Y-%m-%d').date()
+            d2 = datetime.strptime(hasta, '%Y-%m-%d').date()
+            qs = qs.filter(check_in_date__gte=d1, check_out_date__lte=d2)
+        except Exception:
+            qs = qs.none()
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['id', 'hotel', 'habitacion', 'cliente', 'check_in', 'check_out', 'estado', 'total_price'])
+    for b in qs.order_by('-created_at')[:1000]:
+        writer.writerow([b.id, getattr(b.hotel, 'name', ''), getattr(b.room, 'number', ''), getattr(b.client, 'full_name', ''), b.check_in_date, b.check_out_date, b.status, b.total_price])
+    resp = HttpResponse(buffer.getvalue(), content_type='text/csv')
+    resp['Content-Disposition'] = 'attachment; filename="reservas.csv"'
+    return resp
+def get_hotel_activo(request):
+    hotel_param = request.GET.get('hotel') or request.POST.get('hotel')
+    if hotel_param:
+        try:
+            return Hotel.objects.get(id=int(hotel_param))
+        except Exception:
+            try:
+                return Hotel.objects.get(slug=str(hotel_param))
+            except Hotel.DoesNotExist:
+                pass
+    try:
+        return Hotel.objects.order_by('id').first()
+    except Exception:
+        return None

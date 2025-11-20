@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from app.clients.models import Client
 from app.rooms.models import Room
+from app.administration.models import Hotel
 from datetime import timedelta
 
 class Booking(models.Model):
@@ -25,6 +26,7 @@ class Booking(models.Model):
     ]
     
     # Relaciones
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, help_text="Hotel de la reserva")
     client = models.ForeignKey(Client, on_delete=models.CASCADE, help_text="Cliente que realiza la reserva")
     room = models.ForeignKey(Room, on_delete=models.CASCADE, help_text="Habitación reservada")
     
@@ -135,6 +137,12 @@ class Booking(models.Model):
         """Valida que la habitación esté disponible para las fechas solicitadas"""
         if not self.room.available_for_booking:
             raise ValidationError('La habitación no está disponible para reservas')
+        hotel_ref = self.hotel or getattr(self.room, 'hotel', None)
+        if hotel_ref and getattr(hotel_ref, 'is_blocked', False):
+            raise ValidationError('El hotel está bloqueado y no acepta nuevas reservas')
+        # Verificar coherencia de hotel si está seteado
+        if self.hotel and self.room and hasattr(self.room, 'hotel') and self.room.hotel and self.room.hotel != self.hotel:
+            raise ValidationError('La habitación seleccionada no pertenece al hotel de la reserva')
         
         # Verificar si hay conflictos con otras reservas
         conflicting_bookings = Booking.objects.filter(

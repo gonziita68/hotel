@@ -1,0 +1,34 @@
+{% extends "superadmin/base_superadmin.html" %}
+{% block title %}Superadmin • Emails{% endblock %}
+{% block content %}
+<section class="hero-section">
+  <div class="container hero-content">
+    <h1 class="display-6">Auditoría de emails</h1>
+  </div>
+</section>
+<div class="container my-4">
+  <div class="client-card p-3">
+    <form class="row g-3" method="get">
+      <div class="col-md-4"><input class="form-control" name="hotel" placeholder="ID Hotel"></div>
+      <div class="col-md-3"><input class="form-control" type="date" name="desde" placeholder="Desde"></div>
+      <div class="col-md-3"><input class="form-control" type="date" name="hasta" placeholder="Hasta"></div>
+      <div class="col-md-2"><button class="btn btn-primary w-100">Filtrar</button></div>
+    </form>
+  </div>
+  <div class="table-responsive mt-3">
+    <table class="table table-striped align-middle">
+      <thead><tr><th>Destinatario</th><th>Asunto</th><th>Estado</th><th>Fecha</th></tr></thead>
+      <tbody>
+      {% for e in emails %}
+        <tr>
+          <td>{{ e.recipient_email }}</td>
+          <td>{{ e.subject }}</td>
+          <td>{{ e.get_status_display }}</td>
+          <td>{{ e.created_at }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

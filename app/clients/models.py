@@ -2,6 +2,7 @@ from django.db import models
 from django.core.validators import EmailValidator
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
+from app.administration.models import Hotel
 import re
 
 class Client(models.Model):
@@ -68,3 +69,5 @@ class Client(models.Model):
     def get_active_bookings(self):
         """Retorna las reservas activas del cliente"""
         return self.booking_set.filter(status__in=['confirmed', 'pending']).order_by('check_in_date')
+    # Hotel
+    hotel = models.ForeignKey(Hotel, on_delete=models.CASCADE, null=True, blank=True, help_text="Hotel asociado al cliente")

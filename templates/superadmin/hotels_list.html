@@ -1,0 +1,35 @@
+{% extends "superadmin/base_superadmin.html" %}
+{% block title %}Superadmin • Hoteles{% endblock %}
+{% block content %}
+<section class="hero-section">
+  <div class="container hero-content">
+    <h1 class="display-6">Hoteles</h1>
+    <p class="text-light">Administración y estado de hoteles</p>
+  </div>
+</section>
+<div class="container my-4">
+  <div class="row g-3">
+    {% for h in hotels %}
+    <div class="col-md-6 col-lg-4">
+      <div class="client-card">
+        <div class="room-content">
+          <div class="room-header">
+            <h3 class="room-title">{{ h.name }}</h3>
+            <span class="status-badge {% if h.is_blocked %}status-maintenance{% else %}status-available{% endif %}">{% if h.is_blocked %}Bloqueado{% else %}Activo{% endif %}</span>
+          </div>
+          <p class="room-description">Slug: {{ h.slug }}</p>
+          <div class="room-actions">
+            <a href="{% url 'superadmin_hotel_detail' h.id %}" class="btn btn-outline-primary btn-action">Detalles</a>
+            {% if h.is_blocked %}
+            <form method="post" action="{% url 'superadmin_unblock_hotel' h.id %}" class="flex-grow-1">{% csrf_token %}<button class="btn btn-success w-100">Desbloquear</button></form>
+            {% else %}
+            <form method="post" action="{% url 'superadmin_block_hotel' h.id %}" class="flex-grow-1">{% csrf_token %}<button class="btn btn-danger w-100">Bloquear</button></form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "superadmin/base_superadmin.html" %}
+{% block title %}Superadmin • Dashboard{% endblock %}
+{% block content %}
+<section class="hero-section">
+  <div class="container hero-content">
+    <h1 class="display-6">Panel de Superadmin</h1>
+    <p class="text-light">Resumen global data‑driven</p>
+  </div>
+</section>
+<div class="container my-4">
+  <div class="page-section">
+    <div class="kpi-grid">
+      <div class="client-card kpi-card">
+        <div class="kpi-title">Ocupación hoy <small class="text-muted" id="range-global"></small></div>
+        <div id="kpi-occupancy" class="kpi-value">…</div>
+      </div>
+      <div class="client-card kpi-card">
+        <div class="kpi-title">Check‑in hoy</div>
+        <div id="kpi-checkin" class="kpi-value">…</div>
+      </div>
+      <div class="client-card kpi-card">
+        <div class="kpi-title">Reservas en periodo</div>
+        <div id="kpi-period" class="kpi-value">…</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-section">
+    <div class="row g-3">
+      <div class="col-lg-8">
+        <div class="client-card chart-card">
+          <h6 class="mb-3">Reservas diarias</h6>
+          <div id="global-error" class="text-danger mb-2" style="display:none"></div>
+          <canvas id="chart-daily"></canvas>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="client-card chart-card">
+          <h6 class="mb-3">Distribución de estados</h6>
+          <canvas id="chart-status"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function qp(k){const u=new URL(window.location.href);return u.searchParams.get(k)}
+async function loadGlobal(){
+  const d=qp('desde')||'';const h=qp('hasta')||'';const url='/superadmin/api/dashboard/global'+(d||h?`?desde=${encodeURIComponent(d)}&hasta=${encodeURIComponent(h)}`:'');
+  try{
+    const r=await fetch(url);if(!r.ok){document.getElementById('global-error').style.display='block';document.getElementById('global-error').textContent='Error al cargar datos';return}
+    const data=await r.json();
+  const k=data.kpis||{};document.getElementById('kpi-checkin').textContent=k.bookings_checkin_today_total||0;
+  const occ=k.occupancy_today;document.getElementById('kpi-occupancy').textContent=(occ==null?'–':Math.round((occ*100))+'%');
+  document.getElementById('kpi-period').textContent=k.reservations_period_count||0;
+  document.getElementById('range-global').textContent=(d&&h)?`(${d}–${h})`:'';
+  const s=(data.series||{}).daily_bookings||[];
+  const labels=s.map(x=>x.date);const p=s.map(x=>x.pending);const c=s.map(x=>x.confirmed);const cc=s.map(x=>x.cancelled);
+  const ctx=document.getElementById('chart-daily');new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:'Pendientes',data:p,borderColor:'#f59e0b'},{label:'Confirmadas',data:c,borderColor:'#10b981'},{label:'Canceladas',data:cc,borderColor:'#ef4444'}]}});
+  const dist=(data.distributions||{}).status||{pending:0,confirmed:0,cancelled:0};
+  const ctx2=document.getElementById('chart-status');new Chart(ctx2,{type:'doughnut',data:{labels:['Pendiente','Confirmada','Cancelada'],datasets:[{data:[dist.pending,dist.confirmed,dist.cancelled],backgroundColor:['#f59e0b','#10b981','#ef4444']} ]}});
+  }catch(e){document.getElementById('global-error').style.display='block';document.getElementById('global-error').textContent='Error de red'}
+}
+loadGlobal()
+</script>
+{% endblock %}
